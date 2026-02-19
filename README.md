@@ -8,7 +8,7 @@ Each skill provides a solid base ground checklist for the particular area of att
 
 ## Available Skills:
 
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Skill title &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Description |
+| Skill title | Description |
 |----------------|-------------|
 | [rounding-issues-and-exploits](skills/rounding-issues-and-exploits/) | Smart contract security toolkit which lists the consequences of Solidity not supporting Floating Point Arithmetic |
 | [lending-protocol-analysis](skills/lending-protocol-analysis/) | Lending protocols analysis placing heavy focus on fair liquidations |
