@@ -8,14 +8,14 @@ Each skill provides a solid base ground checklist for the particular area of att
 
 ## Available Skills:
 
-| Skill                                                                  | Description |
-|------------------------------------------------------------------------|-------------|
-| [rounding-issues-and-exploits](skills/rounding-issues-and-exploits/)  | Smart contract security toolkit which lists the consequences of Solidity not supporting Floating Point Arithmetic |
-| [lending-protocol-analysis](skills/lending-protocol-analysis/)        | Lending protocols analysis placing heavy focus on fair liquidations |
-| [price-oracles-checklist](skills/price-oracles-checklist)             | Price oracles checklist including different attack vectors such as oracle manipulation, weak oracle validation, etc. |
-| [erc20-differences-checklist](skills/erc20-differences-checklist)     | This skill is a checklist for the differences between ERC20 tokens .e.g missing `decimals()` method, no response on `transfer()` or `transferFrom()` _( USDT )_, etc. |
-| [erc721-specifics](skills/erc721-specifics)                           | Including list of ERC721's' `balanceOf` specifics, posibilities of reentrancy, etc. |
-| [signatures-checklist](skills/signatures-checklist)                   | Covering risks when integrating signatures such as weak  |
+| Skill title | Description |
+|----------------|-------------|
+| [rounding-issues-and-exploits](skills/rounding-issues-and-exploits/) | Smart contract security toolkit which lists the consequences of Solidity not supporting Floating Point Arithmetic |
+| [lending-protocol-analysis](skills/lending-protocol-analysis/) | Lending protocols analysis placing heavy focus on fair liquidations |
+| [price-oracles-checklist](skills/price-oracles-checklist) | Price oracles checklist including different attack vectors such as oracle manipulation, weak oracle validation, etc. |
+| [erc20-differences-checklist](skills/erc20-differences-checklist) | This skill is a checklist for the differences between ERC20 tokens .e.g missing `decimals()` method, no response on `transfer()` or `transferFrom()` _( USDT )_, etc. |
+| [erc721-specifics](skills/erc721-specifics) | Including list of ERC721's' `balanceOf` specifics, posibilities of reentrancy, etc. |
+| [signatures-checklist](skills/signatures-checklist) | Covering risks when integrating signatures such as weak  |
 
 ## Installation
 
