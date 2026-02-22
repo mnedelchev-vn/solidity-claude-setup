@@ -4,7 +4,7 @@
 
 The following repository aims to support web3 builders or security researches when dealing with Solidity protocols. Skills are intended not to limit the agent's performance, but rather to sharpen their focus on specific parts of the web3 protocols. Each skill includes precise explanations of when and in what situations it should be invoked. The nature of skills is such that the agent will only invoke them when they are needed by the current user prompt which makes them unique optimized way when dealing with procedural tasks e.g. building or breaking the same of type of DeFi protocols such as lending protocols.
 
-Each skill provides a solid base ground checklist for the particular area of attack vectors, but it's imperfect! Every month we witness different and more complex varities of web3 vulnerabilities and it's impossible to collect everything at one place. Treat the skills as a helper and a tool, rather than fully delegating your work on them.
+Each skill provides a solid base ground checklist for the particular area of attack vectors, but it's imperfect! Every month we witness different and more complex varieties of web3 vulnerabilities and it's impossible to collect everything at one place. Treat the skills as a helper and a tool, rather than fully delegating your work on them.
 
 ## Available Skills:
 
