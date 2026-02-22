@@ -1,6 +1,6 @@
 ## Task
 
-This command is built to shorten the manual commands when pushing to Github.
+The purpose of this command is to shorten the manual terminal commands when pushing to Github.
 
 Execute:
 - `git status` will output all the current changes that are not pushed yet. We need this information to build proper commit message. In case that there is nothing to commit stop the task execution here.
