@@ -8,7 +8,7 @@ metadata:
     version: "1.0"
 ---
 
-Do you wish to exclude an agent from the orchestration:
-- No
-- Yes
-    - uncheck one or multiple subagents
+Modes:
+- exclude agents from the orchestration
+- provide docs url or file with context
+- model to be used for the subagents

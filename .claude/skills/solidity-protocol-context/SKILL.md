@@ -11,19 +11,19 @@ metadata:
 You're a Solidity smart contract analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts, analyze and understand the flows and relations in the project and print out a context report based on the instructions below.
 
 ## Goal
-Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
+Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
 
 ## Modes
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
 All the command arguments are off by default.
-— `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
-— `--skip-in-depth-level`: Skips the In-depth level report
-— `--report-output`: Saves the output into clean and polished at the root of the particular project `context-report-<protocol_slug>.md`.
-— `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
+- `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
+- `--skip-in-depth-level`: Skips the In-depth level report
+- `--report-output`: Saves the output into clean and polished at the root of the particular project `context-report-<protocol_slug>.md`.
+- `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
 
 ## Instructions
-**Step 1 — High level report**
+### Step 1 — High level report
 As the title of this step says — this is a very high level exploring of the protocol. Ignore any internal methods and logic, dependencies should be ignored as well.
 
 1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic english what is the project about.
@@ -31,12 +31,12 @@ As the title of this step says — this is a very high level exploring of the pr
 3. Table list of all the entry points of per smart contract. Ignore getter methods. Add a table column with method keywords such as modifiers, `payable`, etc. Include symmetry checks of opposing methods, example:
     - Method `haltSwap()` has the mirror method `enableSwap()`
     - Method `deposit(uint256 amount)` has the mirror method `withdraw(uint256 amount)`. A method with particular logic could have multiple mirrow methods, e.g.:
-        — `withdraw(uint256 amount)`
-        — `withdraw(uint256 amount, address receipient)`
-        — `withdraw(uint256 amount, Permit calldata _signature)`
+        - `withdraw(uint256 amount)`
+        - `withdraw(uint256 amount, address receipient)`
+        - `withdraw(uint256 amount, Permit calldata _signature)`
     - etc.
 
-**Step 2 — In-depth level report**
+### Step 2 — In-depth level report
 1. A diagram of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role.
 2. A diagram of the funds flow in each contract. A contract having `payable` fallback is also considered as potential funds flow.
     - Add information about what type of currency each of the contracts will hold in the different stages or cases of the lifecycle
