@@ -14,21 +14,23 @@ You're a Solidity smart contract analyzer. Your job is to crawl a folder with on
 Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
 
 ## Modes
-**Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
-
-All the command arguments are off by default.
+All of the terminal arguments listed below are off by default.
 - `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
 - `--skip-in-depth-level`: Skips the In-depth level report
 - `--report-output`: Saves the output into clean and polished at the root of the particular project `context-report-<protocol_slug>.md`.
 - `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
 
 ## Instructions
-### Step 1 — High level report
-As the title of this step says — this is a very high level exploring of the protocol. Ignore any internal methods and logic, dependencies should be ignored as well.
+### Step 1 — Crawling
+At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project or folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file.
+**Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
+
+### Step 2 — High level report
+As the title of this step says — this is a very high level exploring of the protocol. Ignore any internal methods and logic, dependencies should be ignored as well. The key of the High level report is not to get lost in complexity.
 
 1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic english what is the project about.
 2. List all the actors — users ( public or external methods without access control ), governance, operators, signers, admins, treasury managers, fee collectors, etc. If for some of the roles is sure that it's supposed to be a smart contract then mark it as "Contract", if not then "EOA or smart contract".
-3. Table list of all the entry points of per smart contract. Ignore getter methods. Add a table column with method keywords such as modifiers, `payable`, etc. Include symmetry checks of opposing methods, example:
+3. Table list of all the entry points of per smart contract. Ignore getter methods and "helper/ utils" methods that are built to serve other methods, example — `computeFee`, `calculateInterest`, etc. Add a table column with short plain text description of the method's purpose. Add a table column with method keywords such as modifiers, `payable`, etc. Include symmetry checks of opposing methods, example:
     - Method `haltSwap()` has the mirror method `enableSwap()`
     - Method `deposit(uint256 amount)` has the mirror method `withdraw(uint256 amount)`. A method with particular logic could have multiple mirrow methods, e.g.:
         - `withdraw(uint256 amount)`
@@ -36,7 +38,7 @@ As the title of this step says — this is a very high level exploring of the pr
         - `withdraw(uint256 amount, Permit calldata _signature)`
     - etc.
 
-### Step 2 — In-depth level report
+### Step 3 — In-depth level report
 1. A diagram of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role.
 2. A diagram of the funds flow in each contract. A contract having `payable` fallback is also considered as potential funds flow.
     - Add information about what type of currency each of the contracts will hold in the different stages or cases of the lifecycle
