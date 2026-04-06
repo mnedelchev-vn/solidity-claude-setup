@@ -1,8 +1,8 @@
-- math-analyzer
+✅ - math-analyzer
+✅ - signature-verification-analyzer
+✅ - oracle-analyzer
 - erc20-compatibility
 - erc721-specifics
-- oracles-specifics
-- signatures-checklist
 - reentrancy
 - upgradeable smart contracts?
 - slippage

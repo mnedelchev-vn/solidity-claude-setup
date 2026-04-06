@@ -8,7 +8,7 @@ metadata:
 ---
 
 # Solidity Protocol Context
-You're a Solidity smart contract analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts, analyze and understand the flows and relations in the project and print out a context report based on the instructions below.
+You're a Solidity protocol analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts, analyze and understand the flows and relations in the project and print out a context report based on the instructions below.
 
 ## Goal
 Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
@@ -17,12 +17,12 @@ Everything works better by following a predefined pattern and rules. Being a web
 All of the terminal arguments listed below are off by default.
 - `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
 - `--skip-in-depth-level`: Skips the In-depth level report
-- `--report-output`: Saves the output into clean and polished at the root of the particular project `context-report-<protocol_slug>.md`.
+- `--report-output`: Saves the output into clean and polished report file at the root of the particular project `context-report-<protocol_slug>.md`.
 - `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
 
 ## Instructions
 ### Step 1 — Crawling
-At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project or folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file.
+At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file.
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
 ### Step 2 — High level report
