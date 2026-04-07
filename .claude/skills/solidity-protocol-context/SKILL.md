@@ -39,8 +39,9 @@ As the title of this step says — this is a very high level exploring of the pr
     - etc.
 
 ### Step 3 — In-depth level report
-1. A diagram of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role.
-2. A diagram of the funds flow in each contract. A contract having `payable` fallback is also considered as potential funds flow.
+1. Diagrams of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role.
+2. Diagrams of all the funds flows in each contract. A contract having `payable` fallback is also considered as potential funds flow.
     - Add information about what type of currency each of the contracts will hold in the different stages or cases of the lifecycle
+    - Separated diagrams about the fee collection logic
 3. A diagram of all the modules and internal requests between the protocol's contracts. If the protocol is separated into periphery and core keep the same categorization in the report. If the protocol includes upgradeable contract list them in separate table.
 4. Dependencies table — if the protocol relies on 3rd party contract e.g. swap action to Uniswap, include every individual dependency channel. This step should also include any oracles used.
