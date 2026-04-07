@@ -20,6 +20,11 @@ The purpose of this skill is to crawl a Solidity protocol codebase and provide a
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project.
 - `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
 
+Trigger the skill directly with the following terminal command:
+```
+/solidity-protocol-context contracts/ --report-output --docs-url some-docs.com
+```
+
 ## Installation
 
 ```

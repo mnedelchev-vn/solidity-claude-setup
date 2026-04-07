@@ -11,6 +11,11 @@ The purpose of this skill is to crawl a smart contract(s) and spot security issu
 - `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is **sonnet**.
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project.
 
+Trigger the skill directly with the following terminal command:
+```
+/smart-contract-analyzer contracts/ --report-output
+```
+
 ## Installation
 
 ```
