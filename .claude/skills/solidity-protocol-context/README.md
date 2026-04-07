@@ -19,3 +19,9 @@ The purpose of this skill is to crawl a Solidity protocol codebase and provide a
 - `--skip-in-depth-level`: Skips the In-depth level report
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project.
 - `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
+
+## Installation
+
+```
+mkdir -p ~/.claude/skills/solidity-protocol-context && cp -R .claude/skills/solidity-protocol-context/SKILL.md ~/.claude/skills/solidity-protocol-context
+```
