@@ -1,9 +1,11 @@
 # Smart contract analyzer skill
 
 The purpose of this skill is to crawl a smart contract(s) and spot security issues. The skill is currently spawning 3 unique subagents _( Orchestration )_ and each one of them is covering different group of attack vectors:
-1. [math-analyzer.md](../../agents/math-analyzer.md) — Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them.
-2. [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) — Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc.
-3. [oracle-analyzer.md](../../agents/oracle-analyzer.md) — Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data.
+| Subagent | Description |
+|----------------|-------------|
+| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them. |
+| [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
+| [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 
 ## Skill parameters:
 

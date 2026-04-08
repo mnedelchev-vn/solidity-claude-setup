@@ -27,7 +27,9 @@ By crawling I mean scan the codebase, because based on the scan result you will 
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and smart contract file with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
 ### Step 2 — Orchestration routing
-Based on the crawling report, decide which subagents should be spawned. Respect command parameter `--exclude-subagents`:
+First take into account if command parameter `--exclude-subagents` has been applied and exclude the selected subagents.
+
+Now based on the crawling report, decide which subagents should be spawned ( only agents that are not excluded ):
 | Subagent | Description |
 |----------------|-------------|
 | [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them. |
@@ -35,9 +37,9 @@ Based on the crawling report, decide which subagents should be spawned. Respect 
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 
 ### Step 3 — Orchestration of security checks
-Spawn the selected subagents and let them perform their security checklists. Respect command parameter `--subagents-model`.
+Spawn the selected subagents from Step 2 and let them perform their security checklists. Respect command parameter `--subagents-model`.
 
-### Step 4 — Output report
+### Step 4 — Classification & output report
 1. Use the following example as a guide to know how to classify the issues found:
     - Info — e.g. code cleanup; gas cost optimization; missing comments on crucial logic; typos, etc. ( no real impact on contracts funds )
     - Low — e.g. missing events; floating pragma; zero address validations inside the constructor; anything that an user can enter as parameter and eventually damage only himself, etc. ( no real impact on contracts funds )
@@ -45,7 +47,8 @@ Spawn the selected subagents and let them perform their security checklists. Res
     - High — e.g. oracle manipulations; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
     - Critical — in general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
 2. Remove duplicates.
-3. Before outputting the final table, perform a quick manual check on every Critical, High and Medium findings — read the cited lines and confirm the claim holds. Read any referenced interface files and trace external calls to their concrete implementations before concluding on behavior.
+3. Before outputting the final table, perform a quick manual check on every Critical, High and Medium findings — read the cited lines and confirm the claim holds. Read any referenced interface files and trace external calls to their concrete implementations before concluding on behavior. In simple words check if the list includes assumptions or real issues.
 4. Output the final report in the following table with columns:
     | Severity | Contract | Line(s) | Subagent | Description |
     |:-------:|:-------:|:-------:|:-------:|:-------:|
+5. Take into account if command parameter `--exclude-subagents` has been applied.
