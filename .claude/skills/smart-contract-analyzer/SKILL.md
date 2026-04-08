@@ -18,16 +18,26 @@ All of the terminal arguments listed below are off by default.
 
 ## Instructions
 ### Step 1 — Crawling
-At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file.
-**Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
+At this step crawl the protocol smart contract(s):
+- if the target is a particular `.sol` contract then focus entirely on that specific contract plus all the imported/inherited smart contract
+- if the target is a particular folder then crawl all the `.sol` contracts in this folder and children folders
 
-### Step 2 — Orchestration of security checks
-Spawn the following subagents and let them perform their security checklists. Respect command parameters `--exclude-subagents` and `--subagents-model`:
-1. math-analyzer
-2. signature-verification-analyzer
-2. oracle-analyzer
+By crawling I mean scan the codebase, because based on the scan result you will decide which subagents to include in the Orchestration.
 
-### Step 3 — Output report
+**Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and smart contract file with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
+
+### Step 2 — Orchestration routing
+Based on the crawling report, decide which subagents should be spawned. Respect command parameter `--exclude-subagents`:
+| Subagent | Description |
+|----------------|-------------|
+| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them. |
+| [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
+| [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
+
+### Step 3 — Orchestration of security checks
+Spawn the selected subagents and let them perform their security checklists. Respect command parameter `--subagents-model`.
+
+### Step 4 — Output report
 1. Use the following example as a guide to know how to classify the issues found:
     - Info — e.g. code cleanup; gas cost optimization; missing comments on crucial logic; typos, etc. ( no real impact on contracts funds )
     - Low — e.g. missing events; floating pragma; zero address validations inside the constructor; anything that an user can enter as parameter and eventually damage only himself, etc. ( no real impact on contracts funds )
