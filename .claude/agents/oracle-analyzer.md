@@ -85,3 +85,75 @@ Pyth is a pull oracle meaning that before reading latest price data of a price f
 
 ### Case 3: Missing confidence validation
 When fetching Pyth's price feed data the returned data also includes a confidence interval. During periods of high volatility the confidence interval increases. This means that if price is 2000, but confidence interval is 100 then the actual price is somewhere between 1900 and 2100. Protocols have to have validation that defines the maximum accepted confidence interval.
+
+### Case 4: Atomic Pyth update exploitation
+Pyth is a pull oracle where price updates are submitted on-chain by users. Since users control when the update happens, an attacker can atomically update the price and trade in the same transaction. This allows:
+- Supplying liquidity at a low price, updating the oracle, then removing at the higher price — all in one transaction
+- Sandwiching oracle updates for arbitrage
+Protocols should enforce cooldown periods between price updates and user actions, or use a commit-reveal approach for price updates.
+
+## Additional oracle analysis checklist
+Apply this checklist regardless of which specific oracle provider is used.
+
+### Case 1: Composite/multi-feed oracle overflow
+When chaining multiple price feeds (e.g., TOKEN/ETH then ETH/USD), the intermediate multiplication can overflow. Each feed answer is normalised and multiplied into a composite price. If a feed returns a large value (e.g., > 1.16e5 * 10^feed.decimals()), the multiplication can overflow `uint256`. Check:
+- Whether intermediate multiplications use safe math or `mulDiv` to prevent overflow
+- Whether the composite price accumulator has sufficient precision headroom
+- Whether inverted feeds correctly handle the precision scaling
+```
+// VULNERABLE — can overflow
+compositePrice = (compositePrice * rate) / SCALING_FACTOR;
+
+// SAFER — use mulDiv
+compositePrice = FullMath.mulDiv(compositePrice, rate, SCALING_FACTOR);
+```
+
+### Case 2: Incorrect decimal scaling in price calculations
+A common bug is using the decimal count (e.g., 18) instead of the scaling factor (10^18) in price calculations. This causes prices to be off by orders of magnitude. Check:
+- That price normalization uses `10**decimals` not `decimals` as a raw number
+- That token decimals and price feed decimals are handled separately
+- That cross-token conversions account for differing decimals on each side
+```
+// BAD — uses decimal count instead of scaling factor
+price = rawPrice * capTokenDecimals; // e.g. rawPrice * 18
+
+// GOOD
+price = rawPrice * 10**capTokenDecimals; // e.g. rawPrice * 1e18
+```
+
+### Case 3: No graceful fallback when oracle is unavailable
+If the protocol hard-reverts when an oracle returns stale or zero data, the entire system can be DoS'd. Check:
+- Whether a stale oracle permanently blocks deposits, withdrawals, liquidations, or other critical operations
+- Whether there is a fallback oracle or circuit breaker that activates when the primary oracle fails
+- Whether the protocol can operate in a degraded mode (e.g., pausing new positions but allowing withdrawals)
+
+### Case 4: Using spot price for LP token or position valuation
+Valuing Uniswap V3 positions, LP tokens, or concentrated liquidity positions using the pool's current spot price is manipulable. Check:
+- Whether LP position value is calculated using the pool's `slot0` price (vulnerable) vs an oracle price
+- Whether `sqrtPriceX96` from the pool is used directly for valuation instead of a TWAP or external oracle
+- Whether the protocol correctly obtains the pool address (using the factory, not a user-supplied address)
+
+### Case 5: Negative oracle rate underflow
+Some oracle feeds can return negative values (e.g., funding rates, interest rates). If the protocol casts `int256` to `uint256` without checking for negative values, the result silently underflows to a massive number. Check:
+- That feeds returning signed values (`int256`) are checked for negativity before casting
+- That negative rates are handled explicitly in the protocol logic
+```
+// BAD — underflow if rate is negative
+uint256 positiveRate = uint256(int256NegativeRate);
+
+// GOOD — explicit check
+require(rate >= 0, "Negative rate");
+uint256 positiveRate = uint256(rate);
+```
+
+### Case 6: Missing cross-validation or circuit breaker between multiple feeds
+When a protocol uses multiple oracle feeds, there should be validation that the feeds agree within a reasonable tolerance. If one feed is manipulated or stale, the protocol should detect the discrepancy. Check:
+- Whether the protocol validates that multiple feeds return consistent results
+- Whether there is a maximum deviation threshold between primary and secondary feeds
+- Whether a circuit breaker pauses operations when feeds diverge beyond the threshold
+
+### Case 7: Oracle used for incorrect price type
+In perpetual/derivatives protocols, using oracle spot price for NAV calculations instead of mark price (or vice versa) can lead to exploitable pricing errors. Check:
+- Whether the protocol uses the correct price type for the operation (spot vs mark vs index)
+- Whether Pendle SY token is assumed 1:1 with yield token when it may not be
+- Whether expired derivative positions (e.g., Pendle PT after maturity) are assumed 1:1 with underlying when the actual redemption rate may differ

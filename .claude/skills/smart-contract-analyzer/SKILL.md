@@ -32,9 +32,22 @@ First take into account if command parameter `--exclude-subagents` has been appl
 Now based on the crawling report, decide which subagents should be spawned ( only agents that are not excluded ):
 | Subagent | Description |
 |----------------|-------------|
-| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them. |
+| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagent aims to spot them. |
 | [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
+| [access-control-analyzer.md](../../agents/access-control-analyzer.md) | Detects missing or broken access control: unprotected initializers, missing modifiers, privilege escalation, delegatecall abuse, and input validation gaps. |
+| [cross-chain-analyzer.md](../../agents/cross-chain-analyzer.md) | Audits cross-chain messaging and bridge logic for message replay, missing source validation, payload encoding issues, and L2 sequencer dependencies. |
+| [dos-analyzer.md](../../agents/dos-analyzer.md) | Identifies denial-of-service vectors: unbounded loops, gas griefing, dust attacks, return bombs, and external call failures blocking execution. |
+| [donation-attack-analyzer.md](../../agents/donation-attack-analyzer.md) | Detects vault share inflation and donation attacks: first-depositor exploits, exchange rate manipulation, and ERC4626 totalAssets mismatches. |
+| [flashloan-analyzer.md](../../agents/flashloan-analyzer.md) | Finds flash loan attack vectors: spot price manipulation, governance attacks, collateral manipulation, and missing flash loan fee enforcement. |
+| [frontrunning-analyzer.md](../../agents/frontrunning-analyzer.md) | Spots front-running and MEV vulnerabilities: missing slippage protection, missing deadlines, sandwich attacks, and permit front-running. |
+| [governance-analyzer.md](../../agents/governance-analyzer.md) | Audits governance and voting mechanisms for flash loan voting, double voting via delegation, quorum manipulation, and timelock bypass. |
+| [reentrancy-analyzer.md](../../agents/reentrancy-analyzer.md) | Detects all reentrancy variants: single-function, cross-function, cross-contract, read-only, and ERC721/ERC777/ERC1155 callback reentrancy. |
+| [lock-funds-analyzer.md](../../agents/lock-funds-analyzer.md) | Finds scenarios where funds become permanently stuck: missing withdrawal paths, vesting errors, blocked exits, and native token handling mismatches. |
+| [token-compatibility-analyzer.md](../../agents/token-compatibility-analyzer.md) | Checks ERC20 edge cases: fee-on-transfer, rebasing tokens, ERC777 hooks, blacklistable tokens, non-standard return values, and approve race conditions. |
+| [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) | Audits upgradeable contracts and proxy patterns for storage collisions, unprotected implementations, UUPS auth issues, and Diamond selector clashes. |
+| [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) | Reviews liquidation logic for blocked liquidations, incorrect health factors, self-liquidation exploits, bad debt handling, and cascade risks. |
+| [reward-accounting-analyzer.md](../../agents/reward-accounting-analyzer.md) | Detects reward distribution and accounting bugs: stale accumulators, double counting, interest rate errors, and fee accrual timing manipulation. |
 
 ### Step 3 — Orchestration of security checks
 Spawn the selected subagents from Step 2 and let them perform their security checklists. Respect command parameter `--subagents-model`.

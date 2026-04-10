@@ -151,3 +151,85 @@ function deposit(uint256 _amount, Permit calldata _signature) public {
 In the example above a malicious actor could grab `_signature` and front-run the transaction by directly requesting the USDC contract `permit` method. The impact is DOS of method `deposit`, because now the signature verification will fail when the contract makes request to `IERC20Permit(USDC).permit`. Because the signature has been already verified ealier by the front-running attack.
 
 2. Method `permit` won't revert if the particular token has a `fallback` method. Such token is WETH for example. In that sense the `permit` method should be request to protocol controlled list of tokens. If user is able to request `WETH.permit` he might be able to exploit the system.
+
+### Case 8: Duplicate signature acceptance in multi-sig / threshold verification
+Multi-signature or threshold-based verification schemes must check that each signature comes from a unique signer. Without deduplication, a single signer can submit the same valid signature multiple times to meet the quorum threshold alone. Check:
+- That the verification loop tracks which signers have already been counted
+- That duplicate signatures from the same address are rejected
+- That signers are sorted or indexed to prevent reordering attacks
+```
+// BAD — no deduplication, same signer counted twice
+uint256 validCount;
+for (uint i = 0; i < signatures.length; i++) {
+    address signer = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
+    if (isValidator[signer]) validCount++;
+}
+require(validCount >= threshold);
+
+// GOOD — track seen signers
+for (uint i = 0; i < signatures.length; i++) {
+    address signer = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
+    require(isValidator[signer] && !seen[signer], "Invalid or duplicate signer");
+    seen[signer] = true;
+    validCount++;
+}
+```
+
+### Case 9: Cross-contract signature replay (missing contract address in signed data)
+If the signature hash does not include `address(this)`, the same signature can be replayed across multiple deployed instances of the same contract. This is especially dangerous when a protocol deploys multiple instances (e.g., multiple staking pools, multiple vaults). Check:
+- That the EIP-712 domain separator includes `verifyingContract: address(this)`
+- That custom signature schemes include the contract address in the signed hash
+- That signatures cannot be replayed across different deployments or forks
+```
+// BAD — missing contract address
+bytes32 hash = keccak256(abi.encode(TYPEHASH, sender, tokenIds, rarity));
+
+// GOOD — includes contract address
+bytes32 hash = keccak256(abi.encode(TYPEHASH, sender, tokenIds, rarity, address(this)));
+```
+
+### Case 10: Unsigned critical parameters (fee, recipient, etc.)
+If parameters that affect fund flow (e.g., `feeAmount`, `feeCollector`, `recipient`) are passed as function arguments but NOT included in the signed message, any holder of a valid signature can manipulate these parameters. Check:
+- That ALL parameters that affect token transfers, fees, or recipients are included in the EIP-712 typehash and signed data
+- That function parameters match what was signed — no unsigned "side-channel" parameters
+```
+// BAD — feeAmount and feeCollector are not signed
+TYPEHASH = keccak256("Intent(address user,uint256 amount,uint256 nonce)");
+function execute(address user, uint256 amount, uint256 nonce, uint256 feeAmount, address feeCollector, ...) {
+    // feeCollector receives feeAmount without user consent
+}
+
+// GOOD — fee parameters are signed
+TYPEHASH = keccak256("Intent(address user,uint256 amount,uint256 nonce,uint256 feeAmount,address feeCollector)");
+```
+
+### Case 11: Nonce tracking mismatch (signer vs payer)
+When a signature scheme involves delegation (signer != payer), the nonce must be tracked against the correct identity. If the nonce is verified against the payer but consumed for the signer (or vice versa), the payer's nonce is never actually consumed, enabling replay. Check:
+- That nonce verification and nonce consumption reference the same address
+- That delegated signing schemes track nonces for the authorizing party, not the relayer
+```
+// BAD — verifies payer nonce but marks signer nonce
+_verifyNonce(order.payer, order.nonce);
+nonces[signer][order.nonce] = true; // payer's nonce never consumed!
+
+// GOOD — consistent nonce tracking
+_verifyNonce(order.payer, order.nonce);
+nonces[order.payer][order.nonce] = true;
+```
+
+### Case 12: Balance-based nonce is not a real nonce
+Some protocols use the user's current token balance as a "nonce" to prevent replay. This is insecure because the balance can return to a previous value after transfers, re-enabling old signatures. A nonce must be a monotonically increasing counter. Check:
+- That nonces are strictly incrementing integers, not derived from balanceable/resettable values
+- That nonces cannot be manipulated by transferring tokens
+
+### Case 13: Missing validation that recovered signer matches expected signer
+After `ecrecover` returns a signer address, the protocol must validate that this address is the expected authorized party. Without this check, an attacker can forge a signature that recovers to an arbitrary address. Check:
+- That the recovered address is compared against the expected signer
+- That the expected signer is not an uninitialized (zero) storage variable
+- That in `isValidSignature` (ERC-1271) implementations, the contract properly validates the signature against the actual owner, not just returns success
+
+### Case 14: UserOp hash not derived from actual UserOp
+In ERC-4337 account abstraction, the `userOpHash` used for signature verification must be derived from the actual `PackedUserOperation`. If the contract accepts a pre-computed `userOpHash` without verifying it matches the `userOp`, an attacker can provide a valid signature for a different operation. Check:
+- That `userOpHash` is computed on-chain from the `userOp` struct, not taken from user input
+- That the sender field in the `userOp` is validated against the actual account
+- That session key validation binds the session key to the specific wallet
