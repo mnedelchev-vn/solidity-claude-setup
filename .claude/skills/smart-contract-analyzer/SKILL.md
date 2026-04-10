@@ -73,7 +73,7 @@ Spawn the selected ( only the strictly selected, not all of them ) subagents fro
 3. Order the issues by impact — Critical is first, High is after critical, etc.
 
 ### Step 5 — Unbiased results check
-Spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. His task is to spot and exclude false alarms from the vulnerability report list.
+Spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. Based on different criterias his job is to exclude vulnerabilities from the report list or downgrade their severity.
 
 ### Step 6 — Output report
 1. Output the final clean vulnerability report list in a bordered table with the following structure:
