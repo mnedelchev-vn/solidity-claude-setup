@@ -14,6 +14,7 @@ You're a Solidity smart contract analyzer. Your job is to crawl a folder with on
 All of the terminal arguments listed below are off by default.
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration.
 - `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is **sonnet**.
+- `--raw-manual-context <context>`: This is anything that you would like to add as additional context about the particular codebase. e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"`. 
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project `analyzer-report-<protocol_slug>.md`.
 
 ## Instructions
