@@ -27,11 +27,12 @@ By crawling I mean scan the codebase, because based on the scan result you will 
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and smart contract file with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
 ### Step 2 — Orchestration routing
-Now based on the crawling report from Step 1, decide which subagents should be spawned — be super precise with this decision. Example:
-- A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
-- A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
-- A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
-- etc, etc.
+1. Take into account if command parameter `--exclude-subagents` has been applied — the selected subagents marked as excluded are out of scope. 
+2. Now based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. Example:
+    - A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
+    - A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
+    - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
+    - etc, etc.
 
 | Subagent | Description |
 |----------------|-------------|
@@ -57,8 +58,6 @@ Now based on the crawling report from Step 1, decide which subagents should be s
 | [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) | Audits fee logic: fee bypass via alternative code paths, incorrect fee base amounts, double-fee charging, missing fee collection, and management/performance fee timing manipulation. |
 | [nft-marketplace-analyzer.md](../../agents/nft-marketplace-analyzer.md) | Reviews NFT and marketplace security: ERC721/ERC1155 compliance, unsafe minting, position accounting on transfer, royalty bypass, metadata manipulation, and NFT-gated access bypass. |
 
-Take into account if command parameter `--exclude-subagents` has been applied and exclude the selected subagents.
-
 ### Step 3 — Orchestration of security checks
 Spawn the selected ( only the strictly selected, not all of them ) subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
@@ -70,7 +69,8 @@ Spawn the selected ( only the strictly selected, not all of them ) subagents fro
     - High — e.g. oracle manipulations; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
     - Critical — in general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
 2. Remove the duplicates.
-3. Order the issues by impact — Critical is first, High is after critical, etc.
+3. Take into account terminal parameter `--raw-manual-context`. E.g. `--raw-manual-context "protocol won't use erc777 tokens"` shall exclude any erc777 vulnerability reports. Skip if parameter not passed.
+4. Order the issues by impact — Critical is first, High is after critical, etc.
 
 ### Step 5 — Unbiased results check
 Spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. Based on different criterias his job is to exclude vulnerabilities from the report list or downgrade their severity.
@@ -79,4 +79,4 @@ Spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md)
 1. Output the final clean vulnerability report list in a bordered table with the following structure:
     | Severity | Contract | Line(s) | Subagent | Description |
     |:-------:|:-------:|:-------:|:-------:|:-------:|
-2. Take into account if command parameter `--exclude-subagents` has been applied.
+2. Take into account if command parameter `--report-output` has been applied.

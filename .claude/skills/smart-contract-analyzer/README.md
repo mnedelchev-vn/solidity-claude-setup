@@ -37,6 +37,7 @@ After the selected subagents are done analyzing there is one more subagent left 
 
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration.
 - `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is **sonnet**.
+- `--raw-manual-context <context>`: This is anything that you would like to add as additional context about the particular codebase. e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"`. 
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project.
 
 Trigger the skill directly with the following terminal command:
@@ -54,6 +55,9 @@ mkdir -p ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-
 
 1. By default agent's response is non deterministic meaning that same user prompt being sent multitple times doesn't necessarily mean that the response will be the same. Run the analyzer at least 3 times to get a compherensive report.
 2. Tight scope — run the skill on not more than 5 to 10 smart contracts. Smaller and tighten scope means that each subagent will perform with cleaner context thus leading to better results.
+3. Providing manual context:
+    - Manually adding parameter `--exclude-subagents` to the trigger command will offload the skill with the decision making in the orchestration routing
+    - Manually adding parameter `--raw-manual-context` will also help the subagents orchestration routing e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"` will helo for cleaner report output
 
 > [!WARNING]
 > Each subagent spawned by this skill provides a solid base ground checklist for the particular area of attack vectors, but it's imperfect! Every month in the web3 world we witness different and more complex varieties of web3 vulnerabilities which means that it's impossible to collect all attack vectors at one place. Updating the subagent's checklists with more and more attack vectors is a never ending process. Treat this skill as a helper and a tool, rather than fully delegating your work on it.
