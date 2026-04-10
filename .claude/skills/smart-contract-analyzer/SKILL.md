@@ -22,14 +22,17 @@ At this step crawl the protocol smart contract(s):
 - if the target is a particular `.sol` contract then focus entirely on that specific contract plus all the imported/inherited smart contract
 - if the target is a particular folder then crawl all the `.sol` contracts in this folder and children folders
 
-By crawling I mean scan the codebase, because based on the scan result you will decide which subagents to include in the Orchestration.
+By crawling I mean scan the codebase, because based on the scan result you will decide which subagents to include in the Orchestration. You need to have clear idea about each smart contract and it's logic & modules to be precise in the Orchestration routing step. 
 
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and smart contract file with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
 ### Step 2 — Orchestration routing
-First take into account if command parameter `--exclude-subagents` has been applied and exclude the selected subagents.
+Now based on the crawling report from Step 1, decide which subagents should be spawned — be super precise with this decision. Example:
+- A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
+- A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
+- A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
+- etc, etc.
 
-Now based on the crawling report, decide which subagents should be spawned ( only agents that are not excluded ):
 | Subagent | Description |
 |----------------|-------------|
 | [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagent aims to spot them. |
@@ -48,20 +51,32 @@ Now based on the crawling report, decide which subagents should be spawned ( onl
 | [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) | Audits upgradeable contracts and proxy patterns for storage collisions, unprotected implementations, UUPS auth issues, and Diamond selector clashes. |
 | [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) | Reviews liquidation logic for blocked liquidations, incorrect health factors, self-liquidation exploits, bad debt handling, and cascade risks. |
 | [reward-accounting-analyzer.md](../../agents/reward-accounting-analyzer.md) | Detects reward distribution and accounting bugs: stale accumulators, double counting, interest rate errors, and fee accrual timing manipulation. |
+| [eth-native-handler-analyzer.md](../../agents/eth-native-handler-analyzer.md) | Audits native ETH handling: msg.value reuse in loops/multicall, excess ETH not refunded, missing receive(), WETH wrap/unwrap mismatches, and force-send balance manipulation. |
+| [data-validation-analyzer.md](../../agents/data-validation-analyzer.md) | Detects missing input validation: zero-address/amount checks, unchecked return values, off-by-one errors, abi.encodePacked collisions, and incorrect ABI decoding. |
+| [state-management-analyzer.md](../../agents/state-management-analyzer.md) | Finds state consistency bugs: missing CEI pattern, inconsistent related variable updates, stale cached values, storage cleanup issues, and cross-contract state desynchronization. |
+| [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) | Audits fee logic: fee bypass via alternative code paths, incorrect fee base amounts, double-fee charging, missing fee collection, and management/performance fee timing manipulation. |
+| [nft-marketplace-analyzer.md](../../agents/nft-marketplace-analyzer.md) | Reviews NFT and marketplace security: ERC721/ERC1155 compliance, unsafe minting, position accounting on transfer, royalty bypass, metadata manipulation, and NFT-gated access bypass. |
+
+Take into account if command parameter `--exclude-subagents` has been applied and exclude the selected subagents.
 
 ### Step 3 — Orchestration of security checks
-Spawn the selected subagents from Step 2 and let them perform their security checklists. Respect command parameter `--subagents-model`.
+Spawn the selected ( only the strictly selected, not all of them ) subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
-### Step 4 — Classification & output report
-1. Use the following example as a guide to know how to classify the issues found:
+### Step 4 — Vulnerabilities classification
+1. Use the following example as a guide to know how to classify the issues found in the vulnerability report list:
     - Info — e.g. code cleanup; gas cost optimization; missing comments on crucial logic; typos, etc. ( no real impact on contracts funds )
     - Low — e.g. missing events; floating pragma; zero address validations inside the constructor; anything that an user can enter as parameter and eventually damage only himself, etc. ( no real impact on contracts funds )
     - Medium — e.g. impactful issues, but extremely rare to happen; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds )
     - High — e.g. oracle manipulations; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
     - Critical — in general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
-2. Remove duplicates.
-3. Before outputting the final table, perform a quick manual check on every Critical, High and Medium findings — read the cited lines and confirm the claim holds. Read any referenced interface files and trace external calls to their concrete implementations before concluding on behavior. In simple words check if the list includes assumptions or real issues.
-4. Output the final report in the following table with columns:
+2. Remove the duplicates.
+3. Order the issues by impact — Critical is first, High is after critical, etc.
+
+### Step 5 — Unbiased results check
+Spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. His task is to spot and exclude false alarms from the vulnerability report list.
+
+### Step 6 — Output report
+1. Output the final clean vulnerability report list in a bordered table with the following structure:
     | Severity | Contract | Line(s) | Subagent | Description |
     |:-------:|:-------:|:-------:|:-------:|:-------:|
-5. Take into account if command parameter `--exclude-subagents` has been applied.
+2. Take into account if command parameter `--exclude-subagents` has been applied.

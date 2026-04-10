@@ -7,7 +7,7 @@ The following repo aims to support Web3 builders or security researches when res
 /smart-contract-analyzer contracts/
 ```
 
-## Available Skills:
+## Available Claude Code Skills:
 
 | Skill title | Description |
 |----------------|-------------|

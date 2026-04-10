@@ -89,3 +89,42 @@ When contracts reference each other or have circular dependencies in their contr
 - Withdrawal functions that call external contracts which call back into the withdrawing contract
 - Settlement functions where the settlement target can prevent completion
 - Functions where a user-controlled `receiver` address can reject the operation
+
+### Case 11: DoS via token callback or transfer revert
+Tokens with callbacks (ERC777 `tokensReceived`, ERC1155 `onERC1155Received`) or tokens that revert on zero-value transfers can block protocol operations. A single failing transfer in a batch can revert the entire transaction. Check:
+- Whether batch operations (reward distribution, settlement, liquidation) can be blocked by a single recipient that reverts on token receipt
+- Whether the protocol handles tokens that revert on zero-value transfers (e.g., some tokens revert on `transfer(to, 0)`)
+- Whether the protocol wraps external token transfers in try/catch to avoid cascading failures in batch operations
+
+### Case 12: DoS via oracle failure or unavailability
+When an oracle becomes unavailable or returns stale/invalid data, protocols that hard-revert on bad oracle data can have their entire operation blocked. Check:
+- Whether oracle failures (revert, stale data, zero price) permanently block deposits, withdrawals, or liquidations
+- Whether there is a fallback mechanism or circuit breaker when the primary oracle fails
+- Whether critical safety operations (liquidations, emergency withdrawals) can still function when the oracle is down
+- Whether oracle timeout is set appropriately — too short causes false positives, too long allows stale prices
+
+### Case 13: DoS via expired deadlines blocking operations
+When protocol operations include deadline checks and downstream operations depend on earlier steps completing, expired deadlines can cascade into blocked functionality. Check:
+- Whether expired orders, positions, or requests block queue processing for subsequent entries
+- Whether cleanup/cancellation of expired items requires manual intervention or can be automated
+- Whether time-sensitive operations (auctions, liquidations) have proper expiry handling that doesn't block the entire system
+
+### Case 14: DoS via blacklisted or sanctioned addresses
+Tokens like USDC and USDT have blacklist functionality. If a blacklisted address is involved in a protocol operation (as sender, receiver, or stored address), the transfer reverts. Check:
+- Whether a blacklisted fee recipient, treasury, or reward address can block all protocol operations
+- Whether liquidation can be blocked because the liquidated user's address is blacklisted
+- Whether the protocol allows updating critical addresses (fee recipient, treasury) to recover from blacklist scenarios
+- Whether withdrawal to a blacklisted address blocks other users' withdrawals in batch operations
+
+### Case 15: DoS via paused external dependencies
+Protocols that depend on external pausable contracts (tokens, bridges, oracles, lending pools) can be blocked when those dependencies are paused. Check:
+- Whether the protocol can still process withdrawals when an underlying strategy or pool is paused
+- Whether a single paused strategy blocks all deposits/withdrawals in a multi-strategy vault
+- Whether emergency withdrawal paths exist that bypass paused dependencies
+- Whether bridge message delivery failures leave the protocol in an inconsistent state
+
+### Case 16: DoS via zero total supply or empty state
+Division by zero or unexpected behavior when protocol state is empty (zero total supply, zero staked, no active positions) can cause reverts. Check:
+- Whether reward distribution reverts when `totalSupply` or `totalStaked` is zero
+- Whether price/rate calculations handle the edge case of zero liquidity
+- Whether the protocol can recover from an empty state (all users withdraw) without redeployment

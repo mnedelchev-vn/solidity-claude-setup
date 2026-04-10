@@ -111,3 +111,22 @@ If interest/fees are not accrued before the liquidation check, the protocol may 
 - Whether `accrueInterest()` is called before the health check
 - Whether the debt amount used in liquidation includes all pending fees, funding rates, and accrued interest
 - Whether the debt amount is calculated at the current block, not a stale snapshot
+
+### Case 13: Liquidation fee/penalty miscalculation
+The liquidation penalty or bonus incentivizes liquidators but must be calculated correctly. Check:
+- Whether the liquidation fee is computed as a percentage of the correct base amount (debt vs collateral)
+- Whether the liquidation fee parameter is validated as a percentage (e.g., max 100%) and not treated as a raw amount
+- Whether the fee is applied in the correct direction (charged to the borrower's remaining collateral, not added to their debt incorrectly)
+- Whether the liquidation bonus exceeds the collateral value in edge cases, causing revert or negative accounting
+
+### Case 14: Liquidation blocked by stale oracle price
+Liquidation depends on accurate pricing. If the oracle returns stale data or reverts, liquidations are blocked, allowing bad debt to accumulate. Check:
+- Whether the liquidation path calls the oracle and can revert if the oracle is stale or down
+- Whether a fallback oracle or manual price override exists for emergency liquidations
+- Whether the staleness threshold for the oracle is appropriate for the protocol's liquidation speed requirements
+
+### Case 15: Partial liquidation leaves dust positions
+After partial liquidation, the remaining position may be too small to be economically liquidatable (gas cost exceeds liquidation bonus). Check:
+- Whether partial liquidation enforces a minimum remaining position size
+- Whether dust positions below the minimum are force-closed entirely
+- Whether leftover debt from partial liquidation is properly accounted and can still be liquidated

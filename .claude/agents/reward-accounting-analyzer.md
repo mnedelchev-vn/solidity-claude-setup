@@ -142,3 +142,39 @@ Protocols often maintain reserves, insurance funds, or protocol-owned liquidity 
 - Whether protocol-owned shares are excluded from totalSupply in reward distributions
 - Whether accrued protocol fees are segregated from user funds
 - Whether the protocol can withdraw reserves without affecting user share prices
+
+### Case 15: Reward dilution on new deposits
+When a new user deposits just before rewards are distributed, they receive a share of rewards they didn't earn. This dilutes existing stakers' rewards. Check:
+- Whether the protocol updates the reward accumulator before processing new deposits
+- Whether a warmup period or delay exists before new depositors are eligible for rewards
+- Whether flash-deposit-claim-withdraw in a single block is possible and profitable
+
+### Case 16: Reward distribution for zero-staked periods
+When total staked amount drops to zero, rewards for that period can be permanently lost if the accumulator division by zero is handled by skipping the update. Check:
+- Whether rewards generated during zero-stake periods are tracked and distributed when staking resumes
+- Whether `rewardPerShare` accumulator silently skips updates when `totalStaked == 0`, causing those rewards to vanish
+- Whether the protocol can recover from an empty-staked state without losing queued rewards
+
+### Case 17: Reward rate change creates retroactive unfairness
+Changing the reward rate mid-epoch can retroactively affect rewards for time already elapsed. Check:
+- Whether rate changes take effect immediately or from the next epoch
+- Whether the accumulated rewards up to the rate change are finalized before the new rate applies
+- Whether a manager/admin can set the rate retroactively to misallocate emissions
+
+### Case 18: Reward token balance insufficient to cover claims
+If the protocol distributes rewards based on rate calculations but the actual reward token balance is lower than what's owed, claims will revert. Check:
+- Whether the protocol validates that sufficient reward tokens are available before setting reward rates
+- Whether `notifyRewardAmount` verifies the contract actually holds the specified tokens
+- Whether excess claims are handled gracefully (partial claim, queuing) instead of reverting
+
+### Case 19: Reward cliff / epoch boundary edge cases
+Users who stake at the exact boundary of a reward epoch can either double-earn or miss rewards entirely depending on `>` vs `>=` comparisons. Check:
+- Whether boundary conditions at epoch start/end use consistent inclusive/exclusive comparisons
+- Whether users staking at `block.timestamp == epochEnd` are counted in the ending or starting epoch
+- Whether epoch transitions are processed before user operations in the same block
+
+### Case 20: Multi-token reward distribution inconsistency
+Protocols distributing multiple reward tokens may have inconsistent update logic across tokens. Check:
+- Whether all reward tokens' accumulators are updated simultaneously during stake/unstake operations
+- Whether adding or removing a reward token mid-distribution corrupts existing reward calculations
+- Whether different reward tokens with different decimals are handled correctly in the accumulator

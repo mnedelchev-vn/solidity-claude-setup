@@ -1,9 +1,9 @@
 # Smart contract analyzer skill
 
-The purpose of this skill is to crawl a smart contract(s) and spot security issues. The skill is currently spawning 3 unique subagents _( Orchestration )_ and each one of them is covering different group of attack vectors:
+The purpose of this skill is to crawl a smart contract(s) and spot security issues. The skill is currently spawning 21 unique subagents _( Orchestration )_ and each one of them is covering different group of attack vectors:
 | Subagent | Description |
 |----------------|-------------|
-| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagents aims to spot them. |
+| [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagent aims to spot them. |
 | [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 | [access-control-analyzer.md](../../agents/access-control-analyzer.md) | Detects missing or broken access control: unprotected initializers, missing modifiers, privilege escalation, delegatecall abuse, and input validation gaps. |
@@ -19,6 +19,19 @@ The purpose of this skill is to crawl a smart contract(s) and spot security issu
 | [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) | Audits upgradeable contracts and proxy patterns for storage collisions, unprotected implementations, UUPS auth issues, and Diamond selector clashes. |
 | [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) | Reviews liquidation logic for blocked liquidations, incorrect health factors, self-liquidation exploits, bad debt handling, and cascade risks. |
 | [reward-accounting-analyzer.md](../../agents/reward-accounting-analyzer.md) | Detects reward distribution and accounting bugs: stale accumulators, double counting, interest rate errors, and fee accrual timing manipulation. |
+| [eth-native-handler-analyzer.md](../../agents/eth-native-handler-analyzer.md) | Audits native ETH handling: msg.value reuse in loops/multicall, excess ETH not refunded, missing receive(), WETH wrap/unwrap mismatches, and force-send balance manipulation. |
+| [data-validation-analyzer.md](../../agents/data-validation-analyzer.md) | Detects missing input validation: zero-address/amount checks, unchecked return values, off-by-one errors, abi.encodePacked collisions, and incorrect ABI decoding. |
+| [state-management-analyzer.md](../../agents/state-management-analyzer.md) | Finds state consistency bugs: missing CEI pattern, inconsistent related variable updates, stale cached values, storage cleanup issues, and cross-contract state desynchronization. |
+| [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) | Audits fee logic: fee bypass via alternative code paths, incorrect fee base amounts, double-fee charging, missing fee collection, and management/performance fee timing manipulation. |
+| [nft-marketplace-analyzer.md](../../agents/nft-marketplace-analyzer.md) | Reviews NFT and marketplace security: ERC721/ERC1155 compliance, unsafe minting, position accounting on transfer, royalty bypass, metadata manipulation, and NFT-gated access bypass. |
+
+The skill decides which subagent is to be called per codebase:
+- A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
+- A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
+- A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
+- etc, etc.
+
+After the selected subagents are done analyzing there is one more subagent left to be spawned — [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating them if they're really legit or if the defined severity/impact is correct. Based on some preconditions the subagent can decide to drop issues vulnerabilities report list or to downgrade them.
 
 ## Skill parameters:
 

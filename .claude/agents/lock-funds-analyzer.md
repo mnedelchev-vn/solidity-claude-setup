@@ -147,3 +147,23 @@ When admin rejects or cancels a user's pending operation (deposit, withdrawal, r
 - Whether cancelled deposits refund the deposited tokens
 - Whether pending redemptions that are rejected unlock the user's position
 - Whether the user can re-submit after a rejection without needing additional tokens
+
+### Case 16: Funds locked during migration or upgrade
+When a protocol upgrades or migrates to a new version, user funds in the old contract must be transferable. Check:
+- Whether the migration function transfers all user balances, including accrued but unclaimed rewards
+- Whether LP tokens or receipts from the old version remain redeemable after migration
+- Whether the old contract's withdrawal function remains operational during and after migration
+- Whether the migration deadline or window leaves users unable to act if they miss it
+
+### Case 17: Funds locked due to paused or emergency state
+When a protocol enters emergency/paused mode, user funds should still be withdrawable. Check:
+- Whether the pause modifier blocks withdrawal/exit functions (it should not)
+- Whether emergency withdrawal functions exist and are accessible to all users, not just admin
+- Whether the protocol can get permanently stuck in paused state if the admin key is lost
+- Whether funds accrue interest or rewards during pause that become unclaimable
+
+### Case 18: Funds locked due to zero shares or receipt tokens
+When a user deposits but receives zero shares (due to rounding, inflation attack, or minimum thresholds), their deposit is effectively donated to the vault. Check:
+- Whether deposits that would mint zero shares are rejected with a revert
+- Whether rounding in share calculation can cause a user to receive 0 shares for a non-zero deposit
+- Whether the minimum shares check accounts for virtual offset shares (ERC4626 offset pattern)

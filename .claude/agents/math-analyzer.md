@@ -140,3 +140,63 @@ When a protocol interacts with external systems that have different precision re
 - Whether amounts are validated to be divisible by the required precision before truncation
 - Whether the truncation remainder is handled (refunded or accounted for)
 - Whether conversion between precision levels is round-trip safe (convert → unconvert == original)
+
+### Case 15: Percentage / basis-point calculation errors
+Protocols often define fees, thresholds, or ratios in basis points (BPS) where 10000 = 100%. Common mistakes include using the wrong denominator (100 instead of 10000), applying BPS to already-scaled values, or confusing percentage with BPS. Check:
+- Whether BPS constants are defined correctly (10000 = 100%, not 1000)
+- Whether percentage values are applied with the correct denominator
+- Whether setter functions validate that BPS values don't exceed 10000
+```
+// BAD — denominator is 100, so fee = 30% instead of 3%
+uint256 fee = amount * 300 / 100;
+
+// GOOD — denominator is 10000 for BPS
+uint256 fee = amount * 300 / 10000; // 3%
+```
+
+### Case 16: Share price should not change on deposit/withdraw
+A core invariant of share-based systems is that a deposit or withdrawal must not change the share price for other users. If rounding errors cause the share price to move, an attacker can repeatedly deposit/withdraw to extract value. Check:
+- Whether `deposit` and `withdraw` both preserve the share-to-asset ratio (within 1 wei tolerance)
+- Whether the rounding direction for shares minted on deposit differs from shares burned on withdraw (it should — see Case 4)
+- Whether a single deposit/withdraw round-trip can extract more assets than were deposited
+```
+// INVARIANT — must hold before and after any deposit/withdraw
+// totalAssets() / totalSupply() ~= constant (within 1 wei)
+```
+
+### Case 17: Compound interest calculation errors
+When protocols compute compound interest, using simple interest formulas or applying rate updates mid-epoch introduces compounding errors that grow over time. Check:
+- Whether interest is compounded correctly using exponential math (e.g., `(1 + rate)^time`) rather than linear approximation (`rate * time`)
+- Whether mid-epoch rate changes retroactively misapply the new rate to already-elapsed time
+- Whether the compounding frequency matches the documented specification
+
+### Case 18: Wad/Ray/BPS scale confusion
+Protocols using multiple scaling conventions (wad=1e18, ray=1e27, BPS=1e4) in the same codebase risk mixing them in a single formula. Check:
+- Whether multiplications/divisions mix operands of different scales without proper conversion
+- Whether library functions (e.g., `wadMul`, `rayMul`) are used with values at the correct scale
+- Whether return values from external calls are in the expected scale before being used in local calculations
+
+### Case 19: Unchecked arithmetic in Solidity >=0.8 `unchecked` blocks
+Solidity 0.8+ added automatic overflow/underflow checks, but developers use `unchecked {}` blocks for gas optimization. If the invariants that justify `unchecked` are wrong, silent overflow/underflow occurs. Check:
+- Whether every `unchecked` block has a proven invariant that prevents overflow/underflow
+- Whether accumulators inside `unchecked` blocks can overflow after extended protocol operation
+- Whether subtraction inside `unchecked` blocks is guaranteed to have `a >= b`
+```
+// DANGEROUS — assumes totalDeposits >= withdrawal, but edge cases may violate this
+unchecked {
+    totalDeposits -= withdrawal; // silent underflow if invariant broken
+}
+```
+
+### Case 20: Minimum deposit / dust amount exploits
+Protocols without minimum deposit amounts allow attackers to create positions with tiny (dust) amounts. These micro-positions can be used to grief the system, exploit rounding in their favor, or block liquidations. Check:
+- Whether a minimum deposit/stake/mint amount is enforced
+- Whether dust positions (e.g., 1 wei) can earn disproportionate rewards due to rounding
+- Whether dust amounts can block or grief protocol operations (e.g., preventing liquidation of a 1-wei position)
+- Whether zero-amount deposits/withdrawals are rejected
+
+### Case 21: Stale exchange rate / conversion rate usage
+When protocols cache or snapshot exchange rates (e.g., cToken exchange rates, stETH/ETH rate, vault share price), using a stale rate for calculations leads to incorrect valuations. Check:
+- Whether exchange rates are fetched fresh before use or rely on cached/stale values
+- Whether rate updates are triggered before critical operations (deposit, withdraw, liquidate)
+- Whether time-dependent rates (interest indices, reward accumulators) are accrued up to the current block before being read

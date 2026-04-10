@@ -100,3 +100,16 @@ Some state changes are predictable and profitable to back-run (executing a trans
 - Rebasing events that change token balances
 - Governance proposals that affect token value
 - Protocol parameter changes (fee changes, interest rate changes) that can be anticipated and traded
+
+### Case 11: NFT / token minting sniping
+NFT mints, airdrops, and token claims are high-value front-running targets. Check:
+- Whether mint functions can be sniped by bots monitoring the mempool for the mint-enabling transaction
+- Whether whitelist/allowlist-based mints can be front-run when the merkle root is set
+- Whether NFT reveal mechanisms (metadata reveal) can be gamed by front-running the reveal transaction and selling overvalued tokens
+- Whether batch minting has slippage protection on price per token
+
+### Case 12: Priority fee / gas price manipulation
+Validators and sophisticated MEV bots can manipulate transaction ordering through priority fees. Check:
+- Whether time-sensitive operations (auctions, liquidations, oracle updates) are susceptible to priority gas auctions (PGA)
+- Whether on-chain auctions use a commit-reveal scheme to prevent last-moment sniping
+- Whether the protocol has protections against validator-level reordering (e.g., private mempools, Flashbots Protect)

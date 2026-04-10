@@ -108,3 +108,27 @@ Admin functions that set fees, rates, thresholds, or durations without bounds ch
 - Whether LTV/liquidation thresholds are validated to be in sensible ranges
 - Whether slippage parameters are validated to be non-zero and below 100%
 - Whether parameters set to zero are handled (e.g., a zero fee denominator causes division by zero)
+
+### Case 14: First depositor / first user gains admin-like control
+In some protocols, the first user to interact (first depositor, first staker, first position creator) gains disproportionate control or can set initial state to their advantage. Check:
+- Whether the first depositor can manipulate the initial share price or exchange rate
+- Whether the first user can set protocol parameters that affect subsequent users
+- Whether the initial state (empty pool, zero supply) creates privilege for early actors
+
+### Case 15: Constructor logic in upgradeable contracts (should be initializer)
+Using constructor logic in contracts that are deployed behind a proxy means the constructor runs on the implementation, not the proxy. Check:
+- Whether state set in the constructor is accessible through the proxy (it won't be)
+- Whether `immutable` variables are used correctly (they ARE set on the implementation and work through delegatecall)
+- Whether the contract uses a constructor instead of an initializer pattern when behind a proxy
+
+### Case 16: Timelock bypass through parameter changes
+Protocols with timelocks may have paths that circumvent the delay. Check:
+- Whether admin can change the timelock delay itself without going through the timelock
+- Whether multiple small parameter changes that individually seem safe can compound into a dangerous state change
+- Whether the timelock can be bypassed by changing the executor address
+
+### Case 17: Unprotected emergency functions
+Emergency functions (emergency withdraw, pause, kill switch) must be properly access-controlled but also not create single points of failure. Check:
+- Whether emergency functions are protected with appropriate access control (not just `onlyOwner` for a protocol-wide shutdown)
+- Whether emergency functions can be abused by a compromised admin to drain funds
+- Whether the emergency function properly handles all state transitions (accounting, pending operations, rewards)
