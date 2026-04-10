@@ -24,7 +24,7 @@ Based on the following questions decide to exclude vulnerabilities from the repo
 3. Who is impacted? Is it a self-impact?
     - Yes -> Exclude
 4. Is the impact immediatelly on single action or happening over time ( dust-level rounding errors, negligible fee accumulation )
-    - Yes -> Downgrade
+    - Happening over time -> Downgrade
 5. Existing Mitigations — Is the issue already mitigated by another control in the codebase? E.g. method of contract A doesn't perform parameter validation and pass the parameter to another contract, but contract B actually validates the parameter.
     - Yes -> Downgrade
 6. Is the finding based on a false assumption about external protocol behavior?
