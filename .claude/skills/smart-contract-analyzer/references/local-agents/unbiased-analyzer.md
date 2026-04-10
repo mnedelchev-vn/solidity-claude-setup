@@ -12,8 +12,8 @@ The core goal is to support the main agent with verifying that the collected lis
 
 ## Analysis checklist
 
-### Step 1: Research report list
-Perform a check on every Critical, High and Medium findings — read the cited lines and confirm the claim holds. Read any referenced interface files and trace external calls to their concrete implementations before concluding on behavior. In simple words check if the list includes assumptions/hallucinations from the subagents or real issues.
+### Step 1: Study the report list
+Perform a check on every Critical, High and Medium findings — read the cited lines and confirm the claim holds. Go back to the codebase — read any referenced interface files and trace external calls to their concrete implementations before concluding on behavior. In simple words check if the list includes assumptions/hallucinations from the subagents or real issues.
 
 ### Step 2: Question the report list
 Based on the following questions decide to exclude vulnerabilities from the report list or to downgrade their severity:
