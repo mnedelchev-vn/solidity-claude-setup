@@ -161,14 +161,14 @@ Multi-signature or threshold-based verification schemes must check that each sig
 // BAD — no deduplication, same signer counted twice
 uint256 validCount;
 for (uint i = 0; i < signatures.length; i++) {
-    address signer = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
+    address signer = ECDSA.recover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
     if (isValidator[signer]) validCount++;
 }
 require(validCount >= threshold);
 
 // GOOD — track seen signers
 for (uint i = 0; i < signatures.length; i++) {
-    address signer = ecrecover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
+    address signer = ECDSA.recover(digest, signatures[i].v, signatures[i].r, signatures[i].s);
     require(isValidator[signer] && !seen[signer], "Invalid or duplicate signer");
     seen[signer] = true;
     validCount++;
@@ -222,19 +222,13 @@ Some protocols use the user's current token balance as a "nonce" to prevent repl
 - That nonces are strictly incrementing integers, not derived from balanceable/resettable values
 - That nonces cannot be manipulated by transferring tokens
 
-### Case 13: Missing validation that recovered signer matches expected signer
-After `ecrecover` returns a signer address, the protocol must validate that this address is the expected authorized party. Without this check, an attacker can forge a signature that recovers to an arbitrary address. Check:
-- That the recovered address is compared against the expected signer
-- That the expected signer is not an uninitialized (zero) storage variable
-- That in `isValidSignature` (ERC-1271) implementations, the contract properly validates the signature against the actual owner, not just returns success
-
-### Case 14: UserOp hash not derived from actual UserOp
+### Case 13: UserOp hash not derived from actual UserOp
 In ERC-4337 account abstraction, the `userOpHash` used for signature verification must be derived from the actual `PackedUserOperation`. If the contract accepts a pre-computed `userOpHash` without verifying it matches the `userOp`, an attacker can provide a valid signature for a different operation. Check:
 - That `userOpHash` is computed on-chain from the `userOp` struct, not taken from user input
 - That the sender field in the `userOp` is validated against the actual account
 - That session key validation binds the session key to the specific wallet
 
-### Case 15: ERC-1271 smart contract wallet signature bypass
+### Case 14: ERC-1271 smart contract wallet signature bypass
 Smart contract wallets implement `isValidSignature(bytes32, bytes)` per ERC-1271. Faulty implementations can allow anyone to pass signature checks. Check:
 - That the `isValidSignature` implementation does not return the magic value unconditionally or via `fallback()`
 - That the implementation validates the signature against the actual wallet owner, not just against any valid ECDSA signature
@@ -254,7 +248,7 @@ function isValidSignature(bytes32 hash, bytes memory signature) external view re
 }
 ```
 
-### Case 16: Domain separator not updated on chain fork
+### Case 15: Domain separator not updated on chain fork
 If the EIP-712 domain separator is computed once at deployment and cached (immutable), it will be stale after a chain fork (e.g., Ethereum → PoW fork). Signatures valid on one chain become valid on the other. Check:
 - Whether the domain separator uses `block.chainid` dynamically or caches it at construction
 - Whether the domain separator is recomputed if `block.chainid` changes (detecting a fork)
@@ -272,34 +266,33 @@ function DOMAIN_SEPARATOR() public view returns (bytes32) {
 }
 ```
 
-### Case 17: Session key scope bypass
+### Case 16: Session key scope bypass
 Session keys are temporary keys with limited permissions (e.g., can only call specific functions, limited value, time-bound). If the scope enforcement is flawed, a session key can exceed its authorized actions. Check:
 - That session key permissions (allowed functions, allowed contracts, value limits, time limits) are enforced on-chain, not just off-chain
 - That session key operations cannot be batched/multicalled to bypass per-call limits
 - That session key disabling is properly authorized (only the wallet owner or designated role can disable)
 - That expired session keys are rejected and cannot be used after their validity window
 
-### Case 18: Invalidated / cancelled signature still usable
+### Case 17: Invalidated / cancelled signature still usable
 When a user cancels or invalidates a signature (e.g., cancels an order), the signature must be permanently unusable. Check:
 - That signature cancellation marks the nonce as used (not just increments a counter that could be circumvented)
 - That order cancellation in off-chain order book protocols properly invalidates the on-chain execution path
 - That invalidated signatures cannot be reactivated by state changes (e.g., transferring tokens back to allow the same nonce)
 
-### Case 19: Signature length validation missing
+### Case 18: Signature length validation missing
 ECDSA signatures should be exactly 65 bytes (r=32, s=32, v=1). Compact signatures (EIP-2098) are 64 bytes. Check:
 - That the protocol validates signature length before attempting recovery
 - That the protocol supports both standard (65-byte) and compact (64-byte) signatures if intended
 - That oversized signatures don't cause buffer overread or unexpected behavior
 - That the protocol's signature verification is consistent with the signing scheme used off-chain
 
-### Case 20: Off-chain signer address not validated against authorization
+### Case 19: Off-chain signer address not validated against authorization
 After recovering a signer address from a signature, the protocol must verify this address is authorized. Check:
 - That the recovered signer is checked against a whitelist, role mapping, or ownership
 - That the signer check cannot be bypassed by providing a signature from an unrelated but valid key pair
-- That `ecrecover` returning `address(0)` (malformed signature) is explicitly rejected
 - That the signer validation is not vulnerable to TOCTOU (time-of-check/time-of-use) if the authorization can change between signature creation and verification
 
-### Case 21: Account abstraction (ERC-4337) validation bypass
+### Case 20: Account abstraction (ERC-4337) validation bypass
 ERC-4337 introduces `validateUserOp` for custom signature validation. Check:
 - That `validateUserOp` properly verifies the signature against the account owner
 - That the `userOp.sender` field matches `address(this)` (the actual account contract)
