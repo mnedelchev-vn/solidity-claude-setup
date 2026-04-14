@@ -200,3 +200,112 @@ When protocols cache or snapshot exchange rates (e.g., cToken exchange rates, st
 - Whether exchange rates are fetched fresh before use or rely on cached/stale values
 - Whether rate updates are triggered before critical operations (deposit, withdraw, liquidate)
 - Whether time-dependent rates (interest indices, reward accumulators) are accrued up to the current block before being read
+
+### Case 22: Incorrect percentage / share / proportion calculation
+One of the most frequent arithmetic bugs. When calculating a user's proportion of a pool, vault, or reward system, the formula or its inputs are wrong. Check:
+- Whether the share calculation uses the correct numerator and denominator (e.g., `userDeposit / totalDeposits` vs `userDeposit / totalShares`)
+- Whether protocol-owned shares, accrued fees, or excluded supply are correctly included/excluded from the denominator
+- Whether the proportion is calculated BEFORE or AFTER the state change (timing matters — e.g., minting shares before adding to totalSupply inflates the proportion)
+- Whether the share/proportion is calculated consistently across all code paths (deposit, withdraw, transfer, liquidation)
+```
+// BAD — accruedProtocolFee not excluded, dilutes user share
+uint256 userShare = userDeposit * totalShares / totalAssets(); // totalAssets includes protocol fees
+
+// GOOD — exclude protocol-owned portion
+uint256 userShare = userDeposit * totalShares / (totalAssets() - accruedProtocolFee);
+```
+
+### Case 23: Signed integer arithmetic issues
+Solidity's `int256` type introduces signed arithmetic complexities that `uint256` doesn't have. Check:
+- Whether `int256` to `uint256` casting is safe (negative values become huge positive numbers)
+- Whether `uint256` to `int256` casting is safe (values > `type(int256).max` overflow)
+- Whether `int256` subtraction can underflow when computing deltas (e.g., PnL, price changes)
+- Whether `abs()` of `type(int256).min` overflows (it does — `-2^255` has no positive counterpart in int256)
+- Whether mixed signed/unsigned arithmetic produces unexpected results
+```
+// BAD — abs() of int256.min overflows
+function abs(int256 x) internal pure returns (uint256) {
+    return uint256(x >= 0 ? x : -x); // overflows when x == type(int256).min
+}
+
+// GOOD — handle min value explicitly
+function abs(int256 x) internal pure returns (uint256) {
+    if (x == type(int256).min) return uint256(type(int256).max) + 1;
+    return uint256(x >= 0 ? x : -x);
+}
+```
+
+### Case 24: Minimum amount / threshold rounded to zero
+When a calculated amount (fee, reward, share, minimum deposit) rounds to zero due to integer division, the operation either silently does nothing or reverts. Check:
+- Whether fee calculations on small amounts produce zero fees (effectively free operations for dust amounts)
+- Whether minimum deposit amounts are enforced to prevent zero-share minting
+- Whether reward calculations for small stakers produce zero rewards (lost forever)
+- Whether threshold checks like `require(amount >= minAmount)` use amounts that can be gamed to round to zero
+```
+// BAD — small deposits get zero shares, tokens lost
+function deposit(uint256 assets) external returns (uint256 shares) {
+    shares = assets * totalSupply / totalAssets; // 0 when assets < totalAssets/totalSupply
+    _mint(msg.sender, shares); // mints 0 shares, user loses assets
+}
+```
+
+### Case 25: Exponentiation / power function overflow
+Exponentiation grows extremely fast and easily overflows `uint256`. Used in compound interest, exponential bonding curves, and price calculations. Check:
+- Whether intermediate values in `base^exp` calculations can overflow before the final result
+- Whether safe exponentiation libraries (like `rpow` from DSMath) are used instead of `**` operator
+- Whether the exponent is bounded to prevent overflow (e.g., maximum number of compounding periods)
+- Whether linear approximation is used for small exponents where exponential math would overflow
+```
+// BAD — overflows for large timeElapsed
+uint256 compounded = principal * (1e18 + rate) ** timeElapsed / 1e18 ** timeElapsed;
+
+// SAFER — use rpow or bounded iteration
+uint256 compounded = principal.mulWad(rpow(1e18 + rate, timeElapsed, 1e18));
+```
+
+### Case 26: Division truncation creating economic exploits
+Solidity's integer division always truncates toward zero. When this truncation consistently benefits one party, it creates an extractable economic edge. Check:
+- Whether repeated small operations can extract rounding profits (e.g., deposit 1 wei, get 1 share, redeem for 2 wei)
+- Whether rounding direction is always in favor of the protocol (see Case 4)
+- Whether an attacker can force truncation by choosing input amounts that maximize the remainder
+- Whether truncation on large-scale operations (batch processing, reward distribution) causes meaningful value leakage
+
+### Case 27: Scaling factor applied twice or not applied
+A scaling factor (like 1e18, 1e27, or BPS denominator) accidentally applied twice or skipped entirely. Check:
+- Whether helper functions that return already-scaled values are scaled again by the caller
+- Whether library functions (wadMul, rayMul) expect scaled or unscaled inputs
+- Whether price feeds that return values with their own scaling are then additionally scaled by the protocol
+- Whether a conversion path applies scaling at both entry and exit instead of just once
+```
+// BAD — double scaling: wadMul already divides by 1e18, then divides again
+uint256 result = wadMul(a, b) / 1e18; // divided by 1e18 twice!
+
+// GOOD
+uint256 result = wadMul(a, b); // already scaled correctly
+```
+
+### Case 28: Sqrt / sqrtPrice calculation error
+Square root calculations are used in AMMs (Uniswap V3's sqrtPriceX96), geometric means, and volatility calculations. Check:
+- Whether the sqrt algorithm handles edge cases (0, 1, very large numbers)
+- Whether Uniswap V3's Q64.96 fixed-point sqrtPrice is correctly converted to a regular price
+- Whether the precision of the sqrt approximation is sufficient for the use case
+- Whether squaring a sqrt result recovers the original (within acceptable tolerance)
+
+### Case 29: Incorrect WAD/RAY library function usage
+Protocols using multiple scaling conventions may call the wrong library function. Check:
+- Whether `wadMul` is called on values that are actually in RAY scale (or vice versa)
+- Whether mixed-scale operands are passed to the same library function
+- Whether return values from external protocols (Aave uses RAY, many DeFi uses WAD) are converted to the local scale before use
+```
+// BAD — value is in RAY (1e27) but wadMul expects WAD (1e18)
+uint256 result = wadMul(aaveIndex, userBalance); // wrong scale
+
+// GOOD — convert first
+uint256 result = rayMul(aaveIndex, userBalance); // correct for RAY-scaled value
+```
+
+### Case 30: Phantom precision from concatenated operations
+Multiple sequential rounding operations compound and can create significant cumulative error. Check:
+- Whether multi-step calculations (e.g., convert → apply fee → convert back) accumulate rounding errors
+- Whether the protocol combines several rounded intermediate values that compound the error
+- Whether the final result of a round-trip operation (deposit → withdraw) differs from the input by more than 1 wei per step

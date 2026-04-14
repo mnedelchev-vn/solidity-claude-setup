@@ -127,9 +127,9 @@ function depositWithPermit(
 ```
 
 ### Case 6: Using ecrecover precompile is dangerous
-1. Signature malleability - precompile `ecrecover` should not be used directly, because in the ECDSA elliptic curve for every `r`, `s`, `v` there is another coordinate which returns the same valid result. OZ’s ESDCA library fixed this by restricting `s` to be in the upper range.
+1. Signature malleability - precompile `ecrecover` should not be used directly, because in the ECDSA elliptic curve for every `r`, `s`, `v` there is another coordinate which returns the same valid result. OZ’s ECDSA library fixed this by restricting `s` to be in the upper range.
 
-2. Precompile `ecrecover` by default doesn't revert and returns zero address if there is something wrong with the signature, for example hash not corresponding to the signature. Attackers could manipulate a signature to look like it was signed by an zero address so address(0) == ecrecover(digest, v, r, s); condition will be true. This is fixable by validating that the output of ecrecover is not a zero address. This issue is also coevered in the OZ’s ESDCA library.
+2. Precompile `ecrecover` by default doesn't revert and returns zero address if there is something wrong with the signature, for example hash not corresponding to the signature. Attackers could manipulate a signature to look like it was signed by an zero address so address(0) == ecrecover(digest, v, r, s); condition will be true. This is fixable by validating that the output of ecrecover is not a zero address. This issue is also coevered in the OZ’s ECDSA library.
 
 ### Case 7: Front-running permit
 1. The `permit` logic is a ERC20 extension built on-top of EIP-712 that allows approvals to be processed in the form of signature instead of separate on-chain action ( e.g. erc20.approve ) and the issue here is that anyone can front-run such signature and eventually cause DOS attack to following code for example:
@@ -233,3 +233,76 @@ In ERC-4337 account abstraction, the `userOpHash` used for signature verificatio
 - That `userOpHash` is computed on-chain from the `userOp` struct, not taken from user input
 - That the sender field in the `userOp` is validated against the actual account
 - That session key validation binds the session key to the specific wallet
+
+### Case 15: ERC-1271 smart contract wallet signature bypass
+Smart contract wallets implement `isValidSignature(bytes32, bytes)` per ERC-1271. Faulty implementations can allow anyone to pass signature checks. Check:
+- That the `isValidSignature` implementation does not return the magic value unconditionally or via `fallback()`
+- That the implementation validates the signature against the actual wallet owner, not just against any valid ECDSA signature
+- That the `isValidSignature` call is made to the correct contract (not a user-supplied address that implements it to always return true)
+- That `isValidSignature` implementations in upgradeable wallets cannot be changed to bypass ongoing authorizations
+```
+// BAD — always returns valid
+function isValidSignature(bytes32, bytes memory) external pure returns (bytes4) {
+    return 0x1626ba7e; // always valid!
+}
+
+// GOOD — validates against owner
+function isValidSignature(bytes32 hash, bytes memory signature) external view returns (bytes4) {
+    address signer = ECDSA.recover(hash, signature);
+    if (signer == owner) return 0x1626ba7e;
+    return 0xffffffff;
+}
+```
+
+### Case 16: Domain separator not updated on chain fork
+If the EIP-712 domain separator is computed once at deployment and cached (immutable), it will be stale after a chain fork (e.g., Ethereum → PoW fork). Signatures valid on one chain become valid on the other. Check:
+- Whether the domain separator uses `block.chainid` dynamically or caches it at construction
+- Whether the domain separator is recomputed if `block.chainid` changes (detecting a fork)
+- OpenZeppelin's EIP712 base contract handles this correctly since v4.x — check if the protocol uses it or a custom implementation
+```
+// BAD — cached, stale after fork
+bytes32 public immutable DOMAIN_SEPARATOR = keccak256(abi.encode(
+    ..., block.chainid, ...
+)); // never changes even if chainid changes
+
+// GOOD — recompute if chain ID changed (OZ pattern)
+function DOMAIN_SEPARATOR() public view returns (bytes32) {
+    if (block.chainid == _cachedChainId) return _cachedDomainSeparator;
+    return _buildDomainSeparator(); // recompute
+}
+```
+
+### Case 17: Session key scope bypass
+Session keys are temporary keys with limited permissions (e.g., can only call specific functions, limited value, time-bound). If the scope enforcement is flawed, a session key can exceed its authorized actions. Check:
+- That session key permissions (allowed functions, allowed contracts, value limits, time limits) are enforced on-chain, not just off-chain
+- That session key operations cannot be batched/multicalled to bypass per-call limits
+- That session key disabling is properly authorized (only the wallet owner or designated role can disable)
+- That expired session keys are rejected and cannot be used after their validity window
+
+### Case 18: Invalidated / cancelled signature still usable
+When a user cancels or invalidates a signature (e.g., cancels an order), the signature must be permanently unusable. Check:
+- That signature cancellation marks the nonce as used (not just increments a counter that could be circumvented)
+- That order cancellation in off-chain order book protocols properly invalidates the on-chain execution path
+- That invalidated signatures cannot be reactivated by state changes (e.g., transferring tokens back to allow the same nonce)
+
+### Case 19: Signature length validation missing
+ECDSA signatures should be exactly 65 bytes (r=32, s=32, v=1). Compact signatures (EIP-2098) are 64 bytes. Check:
+- That the protocol validates signature length before attempting recovery
+- That the protocol supports both standard (65-byte) and compact (64-byte) signatures if intended
+- That oversized signatures don't cause buffer overread or unexpected behavior
+- That the protocol's signature verification is consistent with the signing scheme used off-chain
+
+### Case 20: Off-chain signer address not validated against authorization
+After recovering a signer address from a signature, the protocol must verify this address is authorized. Check:
+- That the recovered signer is checked against a whitelist, role mapping, or ownership
+- That the signer check cannot be bypassed by providing a signature from an unrelated but valid key pair
+- That `ecrecover` returning `address(0)` (malformed signature) is explicitly rejected
+- That the signer validation is not vulnerable to TOCTOU (time-of-check/time-of-use) if the authorization can change between signature creation and verification
+
+### Case 21: Account abstraction (ERC-4337) validation bypass
+ERC-4337 introduces `validateUserOp` for custom signature validation. Check:
+- That `validateUserOp` properly verifies the signature against the account owner
+- That the `userOp.sender` field matches `address(this)` (the actual account contract)
+- That the `validationData` return value correctly encodes the `validAfter` and `validUntil` timestamps
+- That modules/plugins that extend validation cannot weaken the base signature check
+- That EIP-7702 delegation interactions don't create order-dependent validation issues where delegation status changes between validation and execution

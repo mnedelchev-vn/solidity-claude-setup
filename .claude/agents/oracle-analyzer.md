@@ -157,3 +157,156 @@ In perpetual/derivatives protocols, using oracle spot price for NAV calculations
 - Whether the protocol uses the correct price type for the operation (spot vs mark vs index)
 - Whether Pendle SY token is assumed 1:1 with yield token when it may not be
 - Whether expired derivative positions (e.g., Pendle PT after maturity) are assumed 1:1 with underlying when the actual redemption rate may differ
+
+### Case 8: Oracle returns zero or negative price not validated
+Chainlink `latestRoundData()` can return 0 or negative values under edge conditions. If unchecked, downstream calculations produce catastrophic results (division by zero, underflow, free borrowing). Check:
+- Whether the returned `answer` is validated to be `> 0` (not just `!= 0`, since negative int256 casts to huge uint256)
+- Whether a zero price would cause division-by-zero in collateral valuation or allow borrowing unlimited tokens
+- Whether negative funding rates or interest rates from oracles are handled without underflow
+```
+// BAD — no validation on answer
+(, int256 answer, , ,) = feed.latestRoundData();
+uint256 price = uint256(answer); // negative → huge number, zero → division by zero later
+
+// GOOD — full validation
+(, int256 answer, , uint256 updatedAt,) = feed.latestRoundData();
+require(answer > 0, "Invalid price");
+require(block.timestamp - updatedAt < heartbeat, "Stale price");
+```
+
+### Case 9: Pyth update fee not forwarded
+Pyth's `updatePriceFeeds` requires `msg.value` to cover the update fee. If the protocol doesn't forward the correct fee, the price update silently fails or reverts. Check:
+- Whether `getUpdateFee(updateData)` is called to determine the required fee before calling `updatePriceFeeds`
+- Whether `msg.value` is forwarded correctly when calling `updatePriceFeeds{value: fee}(updateData)`
+- Whether excess `msg.value` after the fee is refunded to the caller
+- Whether the protocol accounts for the Pyth update fee in its own fee/cost calculations
+```
+// BAD — no fee forwarded, reverts or uses stale data
+pyth.updatePriceFeeds(updateData); // reverts: insufficient fee
+
+// GOOD — calculate and forward fee
+uint256 fee = pyth.getUpdateFee(updateData);
+pyth.updatePriceFeeds{value: fee}(updateData);
+```
+
+### Case 10: Oracle price manipulation via flash loan
+On-chain price sources (AMM spot prices, pool reserves) can be manipulated atomically via flash loans, enabling attacks on protocols that rely on these prices. Check:
+- Whether any pricing uses Uniswap V2 `getReserves()` directly
+- Whether Uniswap V3 `slot0().sqrtPriceX96` is used as a price source (manipulable in the same block)
+- Whether the protocol uses TWAP but the observation window is too short (< 30 minutes for meaningful protection)
+- Whether LP token pricing uses pool reserves directly instead of a fair pricing formula with external oracle
+
+### Case 11: Multi-feed derived / composite price overflow
+When chaining multiple price feeds (e.g., TOKEN/ETH × ETH/USD), intermediate multiplications can overflow. Check:
+- Whether the intermediate multiplication of two feed answers can exceed `uint256.max`
+- Whether `FullMath.mulDiv` or equivalent safe math is used for composite price calculations
+- Whether inverted feeds (e.g., using ETH/USD feed for USD/ETH) correctly handle the precision inversion
+- Whether the composite price accumulator has sufficient precision headroom for all supported token pairs
+```
+// VULNERABLE — overflow when both feed answers are large
+uint256 compositePrice = (uint256(answerA) * uint256(answerB)) / SCALING_FACTOR;
+
+// SAFER — use mulDiv
+uint256 compositePrice = FullMath.mulDiv(uint256(answerA), uint256(answerB), SCALING_FACTOR);
+```
+
+### Case 12: Oracle precision loss in price conversion
+Converting between different decimal precisions during price calculations can cause significant precision loss. Check:
+- Whether scaling uses `10**decimals` (correct) vs the raw `decimals` number (wrong — e.g., `* 18` instead of `* 1e18`)
+- Whether the order of multiplication and division preserves precision (multiply before divide)
+- Whether cross-token conversions account for differing decimals on source and destination tokens
+- Whether sqrt-price calculations (Uniswap V3) correctly handle the Q96 fixed-point format
+```
+// BAD — uses decimal count instead of scaling factor
+price = rawPrice * capTokenDecimals; // e.g. rawPrice * 18 instead of rawPrice * 1e18
+
+// GOOD
+price = rawPrice * 10**capTokenDecimals;
+```
+
+### Case 13: Stale oracle permanently blocks critical operations
+If the protocol hard-reverts when an oracle returns stale data, critical operations (withdrawals, liquidations) become permanently DoS'd during oracle downtime. Check:
+- Whether a stale oracle blocks liquidations (leaving positions to accumulate bad debt)
+- Whether a stale oracle blocks user withdrawals (locking user funds)
+- Whether there's a fallback oracle or degraded-mode operation (e.g., pause new borrows but allow withdrawals)
+- Whether the protocol distinguishes between "can't get a fresh price for new operations" vs. "can't let existing users exit"
+
+### Case 14: Oracle front-running / sandwich around price updates
+Pull-based oracles (Pyth) and even push-based oracles (Chainlink with known heartbeats) create arbitrage opportunities around price updates. Check:
+- Whether an attacker can observe a pending oracle update in the mempool and trade before/after it
+- Whether the protocol enforces a cooldown between oracle update and user action
+- Whether price updates and user trades can happen atomically in the same transaction (especially with Pyth)
+- Whether the protocol uses commit-reveal or delayed execution to prevent oracle sandwich attacks
+
+### Case 15: Redstone oracle specific issues
+Redstone uses a unique model where price data is appended to calldata and validated on-chain. Check:
+- Whether the Redstone price data is validated against authorized signers
+- Whether the timestamp of Redstone data is checked for freshness
+- Whether the protocol correctly parses the appended calldata format
+- Whether multiple Redstone price updates in a single transaction are handled correctly
+
+### Case 16: Oracle price feed address misconfiguration
+Hardcoded or incorrectly configured price feed addresses can return prices for the wrong asset or revert entirely. Check:
+- Whether price feed addresses are configurable (not hardcoded) to support deployment across chains
+- Whether the price feed address is validated during initialization (correct pair, correct chain)
+- Whether feed addresses for L2 deployments differ from L1 (they almost always do)
+- Whether deprecated or decommissioned feed addresses are still in use
+
+### Case 17: Oracle price inversion error
+When a price feed returns TOKEN/ETH but the protocol needs ETH/TOKEN (or similar), the price must be inverted correctly. Check:
+- Whether price inversions use the correct formula: `inverted = SCALING_FACTOR^2 / directPrice`
+- Whether the precision is preserved during inversion (small prices can lose precision when inverted)
+- Whether the protocol documents which direction each feed returns and which direction it needs
+```
+// BAD — incorrect inversion, loses precision
+uint256 invertedPrice = 1e18 / directPrice; // e.g. 1e18 / 2000e8 = 0
+
+// GOOD — proper inversion with scaling
+uint256 invertedPrice = (1e18 * 1e18) / directPrice; // preserves precision
+```
+
+### Case 18: L2 sequencer grace period after restart
+After an L2 sequencer comes back online, Chainlink feeds may still have stale data from before the downtime. A grace period must be enforced. Check:
+- Whether the protocol checks `sequencerUptimeFeed` status on L2 deployments (Arbitrum, Optimism, Base)
+- Whether a grace period is enforced after sequencer restart (e.g., 1 hour) before trusting price feeds
+- Whether the grace period duration is sufficient for price feeds to update
+```
+// GOOD — sequencer check with grace period
+(, int256 answer, uint256 startedAt, ,) = sequencerUptimeFeed.latestRoundData();
+require(answer == 0, "Sequencer down"); // 0 = up, 1 = down
+require(block.timestamp - startedAt > GRACE_PERIOD, "Grace period not elapsed");
+```
+
+### Case 19: Missing circuit breaker for extreme price deviations
+When oracle prices change drastically between updates, the protocol should detect and handle the anomaly rather than blindly accepting the new price. Check:
+- Whether the protocol tracks previous prices and compares against incoming updates
+- Whether there's a maximum price deviation threshold (e.g., >50% change triggers a pause)
+- Whether a price band mechanism exists to reject prices outside expected ranges
+- Whether the circuit breaker distinguishes between legitimate volatility and oracle manipulation
+```
+// GOOD — circuit breaker on extreme deviation
+uint256 deviation = newPrice > lastPrice
+    ? (newPrice - lastPrice) * 10000 / lastPrice
+    : (lastPrice - newPrice) * 10000 / lastPrice;
+require(deviation <= MAX_DEVIATION_BPS, "Price deviation too large");
+```
+
+### Case 20: Multi-feed price divergence not validated
+When a protocol uses multiple oracle feeds for the same asset (primary + fallback), divergence between them may indicate manipulation or stale data. Check:
+- Whether the protocol validates that primary and secondary feeds return consistent prices
+- Whether there is a maximum acceptable deviation between feeds
+- Whether the protocol correctly handles the case where one feed is stale but the other is fresh
+- Whether the fallback activation logic is correct (doesn't use stale fallback when primary is fresh)
+
+### Case 21: Using incorrect price pair direction
+Price feeds return prices in a specific direction (e.g., ETH/USD vs USD/ETH). Using the wrong direction gives the reciprocal. Check:
+- Whether the protocol uses the correct feed direction for its calculations
+- Whether price inversions (1/price) are done with sufficient precision
+- Whether feed labels match the actual mathematical operation (e.g., a feed labeled "TOKEN/ETH" but the protocol treats it as "ETH/TOKEN")
+
+### Case 22: Hardcoded stablecoin or wrapped token assumptions
+Assuming 1:1 pegs for stablecoins or wrapped tokens ignores real-world depegging events. Check:
+- Whether USDC, USDT, DAI are assumed to always equal $1.00
+- Whether WBTC is assumed to always equal BTC (WBTC frequently trades at a discount)
+- Whether stETH/wstETH is assumed to always equal ETH
+- Whether the protocol uses actual oracle prices for these assets instead of hardcoded values

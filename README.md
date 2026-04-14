@@ -12,7 +12,7 @@ The following repo aims to support Web3 builders or security researches when res
 | Skill title | Description |
 |----------------|-------------|
 | [smart-contract-analyzer](.claude/skills/smart-contract-analyzer/) | Smart contract security analyzer spawning multiple subagents in parallel which are performing security checks on different groups of attack vectors |
-| [solidity-protocol-context](.claude/skills/solidity-protocol-context/) | Crawling a Solidity protocol codebase and providing High level and In-depth level context about the logic |
+| [solidity-protocol-context](.claude/skills/solidity-protocol-context/) | Crawling a Solidity protocol codebase and providing High level and In-depth level context about the logic including diagrams, funds & fees flows, etc |
 
 ## Installation
 
