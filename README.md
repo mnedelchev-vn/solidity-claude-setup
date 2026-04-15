@@ -27,7 +27,7 @@ The following repo provides Claude Code skills purpose-built for Solidity securi
     ```
 
 - Project-only install:
-    Place the skill under `.claude/skills/` and the subagents under `.claude/agents/` at the root of your project. This way the skill will only activate for prompts within the scope of that project.
+    - Place the skill under `.claude/skills/` and the subagents under `.claude/agents/` at the root of your project. This way the skill will only activate for prompts within the scope of that project.
 
 ## License
 
