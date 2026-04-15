@@ -16,36 +16,38 @@ The core goal is to support the main agent with verifying that the collected lis
 Perform a check on every Critical, High and Medium findings — read the cited lines. You don't take this description at face value. Go back to the codebase — read any referenced interface files and trace internal/external calls to their concrete implementations before concluding on behavior.
 
 ### Step 2: Deduplicate the report list
-If multiple reports that share the same underlying flaw are reported as separated issues -> combine them together into one reported issue. Example — two separate smart contracts of the same codebase having their own swap logic with hardcoded 0 slippage. This should be reported as one unified issue poiting out all the LoCs.
+1. If multiple issues that share the same underlying flaw are reported as separated reports -> combine them together into one reported issue. Example — two separate smart contracts of the same protocol having their own swap logic to Uniswap with hardcoded slippage of value 0. This should be reported as one unified issue poiting out to all the problematic LoCs.
 
-If multiple reports have the same solution -> combine them together into one reported issue. Examples:
-- Example with using `ecrecover` precompile:
-    ```
-    function verify(address signer, uint8 v, bytes32 r, bytes32 s, bytes32 encodedData) public view returns (bool) {
-        bytes32 digest = keccak256(
-            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, encodedData)
-        );
-        return signer == ecrecover(digest, v, r, s); 
-    }
-    ```
-    For the follow code above we got two reported issues:
-        - ecrecover is not safe due to malleability ( we can malicious craft a second valid signature to be valid again )
-        - a maliciously crafted signature could still be valid and return zero address, the method has no zero address validation
+2. If multiple reports have different impact, but have the very same solution -> combine them together into one reported issue. Examples:
+    - Example with using `ecrecover` precompile:
+        ```
+        function verify(address signer, uint8 v, bytes32 r, bytes32 s, bytes32 encodedData) public view returns (bool) {
+            bytes32 digest = keccak256(
+                abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, encodedData)
+            );
+            return signer == ecrecover(digest, v, r, s); 
+        }
+        ```
+        For the follow code above we got two reported issues:
+            - precompile `ecrecover` is not safe due to malleability attack vector ( a maliciously crafted second signature could be accepted to be valid again )
+            - the method has no zero address validation ( a maliciously crafted signature could still be valid and return zero address )
 
-    Both reports have different impact, but the solution for them is the same -> replace ecrecover precompile with OpenZeppelin's ECDSA library and this is why they should be united into one reported issue.
-- Example with using `IERC20(token).approve` method and importing `IERC20` interface from OpenZeppelin:
-    ```
-    function delegateFundsToTreasury(address token, uint256 amount) public {
-        IERC20(token).approve(treasury, amount);
-        /// perform rest of the logic
-    }
-    ```
-    For the follow code above we got two reported issues:
-        - Using weird tokens such as USDT that doesn't return anything on `approve`, `transfer` and `transferFrom`. The Solidity ABI decoder will revert when USDT returns no data from the `approve` method
-        - The treasury not using the entire approved amount will block `delegateFundsToTreasury` from being used again as USDT's `approve` method can increase allowance only from zero to non-zero. Non-zero to zero change of allowance cannot be performed in USDT.
-    
-    Both reports again have different impact, but the solution for them is the same -> it's recommended to use OpenZeppelin’s SafeERC20 and replace `approve` with `forceApprove`. Again these two individual reports should be combined into one.
-- etc, etc
+        Both reports have different impact, but the solution for them is the same -> replace `ecrecover` with OpenZeppelin's ECDSA library where both problems are fixed and this is why both reports should be united into one reported issue.
+    - Example with using `IERC20(token).approve` method and importing `IERC20` interface from OpenZeppelin:
+        ```
+        function delegateFundsToTreasury(address token, uint256 amount) public {
+            IERC20(token).approve(treasury, amount);
+            /// perform rest of the logic
+        }
+        ```
+        For the follow code above we got two reported issues:
+            - Using weird tokens such as USDT that doesn't return anything on methods `approve`, `transfer` and `transferFrom`. The Solidity ABI decoder will revert when USDT returns no data from the `approve` method.
+            - The treasury not using the entire approved amount will block `delegateFundsToTreasury` from being requested again as USDT's `approve` method can increase allowance only from zero to non-zero. Non-zero to non-zero value change of allowance cannot be performed in the USDT contract.
+        
+        Both reports again have different impact, but the solution for them is the same -> it's recommended to use OpenZeppelin’s SafeERC20 and replace `approve` with `forceApprove`. Again these two individual reports should be combined into one.
+    - etc, etc
+
+Provide a visible list in the response of which reports have been combined together.
 
 ### Step 3: Question the report list
 Based on the following checlist perform two actions — exclude vulnerabilities from the report list or downgrade their severity:
@@ -63,3 +65,5 @@ Based on the following checlist perform two actions — exclude vulnerabilities 
     - Yes -> Exclude
 7. Do the attack path include a step/exploit that has been already mitigated by later releases of the Solidity language? Example — being able to `selfdestruct` a smart contract and trying to destroy it, but from EVM >= Cancun onwards, `selfdestruct` will only send all Ether in the account to the given recipient and not destroy the contract.
     - Yes -> Downgrade severity
+
+Provide a visible list in the response of which reports have been excluded or downgraded.

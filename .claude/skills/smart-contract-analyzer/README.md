@@ -37,6 +37,8 @@ The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
 - etc, etc.
 
+Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only )_. Access to `Write` or `Edit` tools is denided.
+
 After the selected subagents are done analyzing there is one more subagent left to be spawned — [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating them if they're really legit or if the defined severity/impact is correct. Based on some preconditions the subagent can decide to drop issues vulnerabilities report list or to downgrade them.
 
 ## Skill parameters:
