@@ -47,7 +47,7 @@ Perform a check on every Critical, High and Medium findings — read the cited l
         Both reports again have different impact, but the solution for them is the same -> it's recommended to use OpenZeppelin’s SafeERC20 and replace `approve` with `forceApprove`. Again these two individual reports should be combined into one.
     - etc, etc
 
-Provide a visible list in the response of which reports have been combined together.
+Provide a visible list in the prompt response of which reports have been combined together. Only the reports that have been merged together, not the full report list.
 
 ### Step 3: Question the report list
 Based on the following checlist perform two actions — exclude vulnerabilities from the report list or downgrade their severity:
@@ -66,4 +66,4 @@ Based on the following checlist perform two actions — exclude vulnerabilities 
 7. Do the attack path include a step/exploit that has been already mitigated by later releases of the Solidity language? Example — being able to `selfdestruct` a smart contract and trying to destroy it, but from EVM >= Cancun onwards, `selfdestruct` will only send all Ether in the account to the given recipient and not destroy the contract.
     - Yes -> Downgrade severity
 
-Provide a visible list in the response of which reports have been excluded or downgraded.
+Provide a visible list in the prompt response of which reports have been excluded or downgraded. Only the reports that have been excluded or downgraded, not the full report list.

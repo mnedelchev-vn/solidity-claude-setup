@@ -41,6 +41,12 @@ Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read,
 
 After the selected subagents are done analyzing there is one more subagent left to be spawned — [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating them if they're really legit or if the defined severity/impact is correct. Based on some preconditions the subagent can decide to drop issues vulnerabilities report list or to downgrade them.
 
+## Installation
+
+```
+mkdir -p ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
+```
+
 ## Skill parameters:
 
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration.
@@ -53,11 +59,9 @@ Trigger the skill directly with the following terminal command:
 /smart-contract-analyzer contracts/ --report-output
 ```
 
-## Installation
+## Execution time
 
-```
-mkdir -p ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
-```
+The skill was triggered numerous on the Sherlock's [Clear Macro by Superfluid contest](https://audits.sherlock.xyz/contests/1263?filter=scope) and the results show that analyzing ~400 nSLOC takes roughly 6 minutes. Analyzing bigger scope with more lines of code or in general running the skill on more complex codebase will definitely increase the execution time.
 
 ## Advices
 
