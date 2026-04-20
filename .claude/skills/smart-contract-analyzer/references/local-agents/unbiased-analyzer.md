@@ -16,8 +16,8 @@ The core goal is to support the main agent with verifying that the collected lis
 Perform a check on every Critical, High and Medium findings — read the cited lines. You don't take this description at face value. Go back to the codebase — read any referenced interface files and trace internal/external calls to their concrete implementations before concluding on behavior.
 
 ### Step 2: Deduplicate the report list
+Deduplication should not rely on keyword matching, but instead on identifying the underlying issue or root cause:
 1. If multiple issues that share the same underlying flaw are reported as separated reports -> combine them together into one reported issue. Example — two separate smart contracts of the same protocol having their own swap logic to Uniswap with hardcoded slippage of value 0. This should be reported as one unified issue poiting out to all the problematic LoCs.
-
 2. If multiple reports have different impact, but have the very same solution -> combine them together into one reported issue. Examples:
     - Example with using `ecrecover` precompile:
         ```
