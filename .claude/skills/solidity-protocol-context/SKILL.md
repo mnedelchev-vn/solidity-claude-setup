@@ -18,7 +18,7 @@ All of the terminal arguments listed below are off by default.
 - `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
 - `--skip-in-depth-level`: Skips the In-depth level report
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project `context-report-<protocol_slug>.md`.
-- `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code.
+- `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Enumerate the sitemap, discover subpages and crawl the rest of the documentation tree. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code. The scope is the entire url page and all of it's subpages.
 
 ## Instructions
 ### Step 1 — Crawling
