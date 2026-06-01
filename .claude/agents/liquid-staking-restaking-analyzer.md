@@ -154,3 +154,108 @@ Validator keys in staking protocols must be carefully managed. Check:
 - Whether validator key ownership is verified (operator submitting someone else's keys)
 - Whether pre-signed exit messages are stored securely and can be triggered when needed
 - Whether validator key rotation is supported and handled correctly
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 15: Exchange rate update ordering in unstake/withdraw
+When unstaking, protocols must update the exchange rate (accrued rewards, validator balance changes) BEFORE computing the shares-to-assets conversion. If the rate is updated after the conversion, users redeem at a stale rate and over-receive shares (or under-receive assets). Check:
+- Whether `unstake()` / `redeem()` updates the exchange rate or calls `_syncRewards()` before calculating `sharesToBurn`
+- Whether `convertToAssets(shares)` during withdrawal uses a pre-update rate
+- Whether there is a "update first, then compute" invariant enforced in the withdrawal path
+- Whether a sandwich attack can exploit the window between rate-update and share burn
+```
+// BAD — exchange rate updated after shares calculation
+function unstake(uint256 shares) external {
+    uint256 assets = shares * exchangeRate / 1e18; // stale rate
+    _updateExchangeRate();                           // too late
+    _burn(msg.sender, shares);
+    token.transfer(msg.sender, assets);
+}
+
+// GOOD — update first
+function unstake(uint256 shares) external {
+    _updateExchangeRate();
+    uint256 assets = shares * exchangeRate / 1e18;
+    _burn(msg.sender, shares);
+    token.transfer(msg.sender, assets);
+}
+```
+
+### Case 16: Beacon chain hard-fork compatibility (Deneb/Electra)
+Protocols that verify beacon chain state via Merkle proofs hardcode tree heights and field indices. Ethereum hard forks (Deneb, Electra) change the `BeaconState` tree height or introduce new fields (e.g., pending balance deposits), silently breaking proof verification or causing incorrect validator status. Check:
+- Whether `BeaconChainProofs` library constants (tree height, field indices) match the current fork version
+- Whether `verifyValidatorFields()` and `verifyBalanceContainer()` still hold after Electra's increased `BeaconState` tree height
+- Whether `verifyWithdrawal()` uses a hardcoded withdrawal tree height that changed in Deneb (4 → 5)
+- Whether validator status is inferred from balance (broken in Electra due to pending balance deposits making new validators appear with zero balance)
+- Whether there is an upgrade mechanism or fork-version parameter to swap proof constants
+
+### Case 17: stETH 1-2 wei transfer rounding
+The stETH token internally tracks balances in shares and converts to ETH amounts. Due to integer division, transfers can deliver 1-2 wei less than the requested amount. Protocols that transfer an exact stETH amount and then expect to hold at least that balance will revert or produce incorrect accounting. Check:
+- Whether the protocol checks `balanceAfter - balanceBefore == expectedAmount` (strict equality fails for stETH)
+- Whether stETH withdrawal requests enforce a minimum of 100 wei (Lido's minimum), blocking dust finalizations
+- Whether `safeTransferFrom(stETH, ...)` is followed by a strict equality check on received amount
+- Whether the protocol uses `transferShares` instead of `transfer` to avoid rounding issues
+
+### Case 18: Withdrawal credential front-running by malicious node operator
+The Ethereum deposit contract uses the first deposit to set withdrawal credentials. A malicious node operator who interacts with the deposit contract directly before the protocol's deposit can set withdrawal credentials to their own address. Subsequent top-up deposits do not override credentials. Check:
+- Whether the protocol verifies that withdrawal credentials point to the protocol-controlled address before accepting a validator
+- Whether there is a pre-deposit step that sets withdrawal credentials to the EigenPod/vault address
+- Whether the validator public key was used in a prior deposit (DepositContract does not distinguish initial from top-up deposits)
+- Whether `registerValidator` / `stake()` validates credentials on-chain or relies solely on off-chain trust
+```
+// BAD — no withdrawal credential verification before depositing
+function stakeValidator(bytes calldata pubkey, bytes calldata sig) external {
+    depositContract.deposit{value: 32 ether}(pubkey, withdrawalCredentials, sig, ...);
+    // attacker already called deposit with their own withdrawalCredentials for this pubkey
+}
+```
+
+### Case 19: stETH negative rebase and protocol insolvency
+Lido stETH balances can decrease (negative rebase) after a significant slashing event. Protocols that record deposited stETH amounts as a fixed number at deposit time will overstate the amount owed to users, causing insolvency. Check:
+- Whether the protocol stores a snapshot of `stETH.balanceOf(address(this))` at deposit time rather than tracking live balance
+- Whether withdrawal refunds reuse the original deposit amount instead of the post-rebase amount
+- Whether `totalAssets()` / TVL reflects the current rebased balance of stETH held
+- Whether a negative rebase can cause arithmetic underflow in reward/withdrawal calculations
+- Whether the protocol can handle a round not ending because `currentBalance < previousBalance`
+
+### Case 20: Delegation to inactive or exiting validator
+Protocols that distribute newly staked funds to validators do not always check whether the target validator is still active. Staking to a validator that is deactivating, in cooldown, or pending removal locks user funds. Check:
+- Whether `_distributeStake()` / `_selectValidator()` validates that the target validator `isActive` before delegating
+- Whether a validator that has begun the exit/deregistration process is excluded from the active validator pool for new deposits
+- Whether newly initiated unstaking on a validator can be blocked because a concurrent deposit already landed in the same epoch
+- Whether the validator selection index is bounded to skip over inactive entries rather than reverting
+
+### Case 21: Operator slashing DoS via unbounded delegation loop
+Slashing functions that iterate over all delegators or delegation records can be made to revert by an attacker who artificially inflates the number of records (e.g., by repeatedly calling `updateDelegation`). This effectively grants impunity to malicious operators. Check:
+- Whether `verifyDoubleSigning()` / `processSlash()` iterates over an unbounded delegation array
+- Whether any function callable by the operator or an external party can increase the size of data structures iterated during slashing
+- Whether slashing uses a pull model (delegators claim their pro-rata loss) rather than a push loop
+- Whether gas limits are verified empirically at realistic delegation counts
+
+### Case 22: Validator deposit index not advancing (all deposits funneling into first validator)
+When a deposit loop cycles through available validators, failing to advance the index means every deposit targets the same validator. Once that validator is full (32 ETH), all subsequent deposits revert, effectively bricking the deposit function. Check:
+- Whether the loop/index variable is incremented inside the iteration or only on success
+- Whether the validator selection index is stored in state and persists across calls
+- Whether there is a fallback path when the selected validator is at capacity
+- Whether the loop correctly skips validators that are full, inactive, or in a pending state
+
+### Case 23: Pending withdrawal amount arbitrarily reset or conflicting with EigenLayer withdrawal initiation
+Some LRT protocols track `_pendingWithdrawalAmount` (or equivalent) to exclude in-flight EigenLayer withdrawals from TVL. If this variable can be reset by anyone, or if new withdrawal requests are created while an EigenLayer epoch withdrawal is in progress, the system can enter an unusable state or inflate apparent TVL. Check:
+- Whether `_pendingWithdrawalAmount` / `pendingRequestedShares` is modified by a permissionless or improperly guarded function
+- Whether creating a new user withdrawal request during an active `settleEpochFromEigenLayer` execution renders the epoch unsettleable
+- Whether the accounting correctly separates "user-requested withdrawals" from "EigenLayer-queued withdrawals"
+- Whether the pending amount is decremented on both the happy path and error/revert path of EigenLayer withdrawal completion
+
+### Case 24: Market-rate LST oracle instead of exchange-rate feed
+LST price oracles that return the market price (e.g., stETH/ETH Chainlink spot) rather than the protocol exchange rate (e.g., `stETH.getPooledEthByShares(1e18)`) allow profitable arbitrage when the market rate deviates from the redemption rate. This enables two-way deposit/withdrawal cycles that drain the protocol. Check:
+- Whether the oracle used is a market-rate feed (Chainlink stETH/ETH) rather than the canonical exchange rate from the LST contract itself
+- Whether there is a deviation check comparing the market rate to the on-chain exchange rate
+- Whether deposits and withdrawals in the same block can generate risk-free profit from the market/exchange-rate spread
+- Whether the protocol has a minimum deviation threshold before accepting oracle prices for share issuance
+
+### Case 25: EigenLayer queued withdrawals excluded from slashable shares calculation
+When `beaconChainETHStrategy` withdrawals are queued in EigenLayer's `DelegationManager`, those shares are not included in the cumulative scaled shares used for operator slashing. This causes `burnableShares` to be understated, and users who complete withdrawal after a slash can receive more than their fair share. Check:
+- Whether `_addQueuedSlashableShares()` correctly handles `beaconChainETHStrategy` alongside other strategies
+- Whether the slashing factor applied to completed withdrawals is consistent with the factor that was in effect when the withdrawal was queued
+- Whether queued withdrawal shares are tracked separately and adjusted if a slash occurs between queueing and completion
+- Whether the EigenPod's `withdrawableRestakedExecutionLayerGwei` is adjusted for slashes that occurred during the queue period

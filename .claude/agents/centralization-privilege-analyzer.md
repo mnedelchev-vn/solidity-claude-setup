@@ -135,3 +135,101 @@ Critical protocol logic (settlement, price finalization, order matching) is dele
 - Whether a compromised backend can approve arbitrary withdrawals or manipulate balances without a user signature
 - Whether a backup recovery path exists if the backend goes offline (users can self-serve after a timeout)
 - Whether the backend's privileged key is a multisig and its powers are documented for users
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 17: Timelock bypass via delay-reduction
+An admin who controls a timelock can first reduce the delay to near-zero using `setDelay()` (or an equivalent setter) and then immediately execute a queued upgrade or parameter change, defeating the entire purpose of the delay. Seen repeatedly in wallet-core upgrade flows and vault quit-period implementations. Check:
+- Whether the delay-setter is itself subject to the current delay before taking effect (i.e., delay changes must be queued through the same timelock they govern)
+- Whether there is a hard minimum floor for the delay that cannot be changed at all (e.g., `require(newDelay >= MIN_DELAY)`)
+- Whether an `emergencyUpgrade` or `delegate` path can bypass the normal delay even when the delay is correctly protected
+- Whether the `quitPeriod` or equivalent can be shortened by the owner after a change has already been queued, shrinking the effective notice period retroactively
+```solidity
+// BAD — owner can shorten delay to 0 and immediately execute
+function setDelay(uint256 _delay) external onlyOwner {
+    delay = _delay; // takes effect instantly, no floor, not self-governed
+}
+
+// GOOD
+uint256 public constant MIN_DELAY = 2 days;
+function setDelay(uint256 _delay) external onlyOwner {
+    require(_delay >= MIN_DELAY, "delay too short");
+    _queue(abi.encodeCall(this.setDelay, (_delay))); // must wait current delay
+}
+```
+
+### Case 18: Fee or rate change applied retroactively to existing positions
+When a privileged role updates a fee, interest rate, or distribution percentage, the new value is applied to already-accrued balances or in-flight positions rather than only to future activity. This lets the admin silently harvest retroactive value from users without their consent. Check:
+- Whether the fee or rate update snapshots per-user accrued value at the time of the change, so existing entitlements are preserved
+- Whether pending withdrawal or redemption requests lock in the rate at request time rather than at settlement time
+- Whether a `managerFeeBPS`, `treasuryRate`, or `platformFee` change applies to tokens already in a claim queue
+- Whether the setter emits an event that gives users enough notice to exit before the new rate takes effect
+```solidity
+// BAD — new fee instantly applies to all accrued-but-unclaimed rewards
+function setManagementFee(uint256 _fee) external onlyManager {
+    managementFee = _fee;
+}
+
+// GOOD — checkpoint each user's accrued amount before changing the rate
+function setManagementFee(uint256 _fee) external onlyManager {
+    _updateAccrued(); // settle pending with old fee first
+    managementFee = _fee;
+}
+```
+
+### Case 19: Privileged role can drain incentive / reward pool directly
+Farming, staking, or incentive contracts expose a function (e.g., `decreaseRewardsAmount`, `withdrawRewards`, `recoverRewards`) that lets an admin transfer reward tokens directly to their own address, immediately draining the pool and leaving depositors with unclaimed rewards. This differs from Case 2 (user-deposit rescue) because the drained assets are protocol-owned reward tokens, not user principal. Check:
+- Whether any admin-only reward-withdrawal function sends tokens to a caller-controlled address with no cap or delay
+- Whether the recipient of the withdrawal is hardcoded to the protocol treasury (not `msg.sender` or an arbitrary parameter)
+- Whether the total withdrawable amount is bounded by `(rewardBalance - allocatedButUnclaimedRewards)` so users can still claim what they earned
+- Whether a timelock or multi-sig is required before moving undistributed rewards out of the contract
+
+### Case 20: Admin can trigger premature state transitions
+Admin-only functions like `finalize()`, `setGoalReached()`, `settleDebt()`, or `closeMarket()` can be called before the natural on-chain conditions (time elapsed, target reached, all penalties paid) are satisfied. This lets a malicious or careless admin lock in a favorable outcome for one party while leaving the other with losses or inaccessible funds. Check:
+- Whether state-finalizing functions verify all prerequisite conditions on-chain (e.g., `require(block.timestamp >= endTime)`, `require(fundsRaised >= goal)`) rather than relying on the admin to call at the right time
+- Whether early finalization can strand funds in a contract state that has no withdrawal path
+- Whether the admin can call `settle` before penalty periods expire, causing unpaid penalties to be socialized onto remaining participants
+- Whether the function emits an event or enforces a notice period so users can react before finalization
+```solidity
+// BAD — admin can finalize before the sale has ended
+function finalize() external onlyOwner {
+    // missing: require(hasSaleEnded(), "sale not over");
+    _finalize();
+}
+```
+
+### Case 21: Privileged roles that can never be revoked
+Minter, burner, staker, spender, or keeper roles granted via `grantRole` have no corresponding revocation path in the contract, or the revocation function is broken (e.g., `revokeRole` is missing, calls the wrong function, or the role is set as a constant). A compromised key holding one of these roles becomes a permanent threat. Check:
+- Whether every `grantRole` / role-assignment function has a corresponding working `revokeRole` / role-removal function
+- Whether the `DEFAULT_ADMIN_ROLE` (or equivalent) can actually revoke all other roles, or whether some roles are hardcoded or self-administered
+- Whether a `KEEPER_ROLE`, `MINTER_ROLE`, or `BURNER_ROLE` is granted during initialization but the initialization function provides no way to rotate or revoke it
+- Whether role-revocation is tested in the test suite (absence of a test here is a red flag)
+
+### Case 22: Owner can front-run users by changing prices or parameters between approval and execution
+A pair/pool owner or admin can monitor the mempool for a user's trade or deposit transaction and front-run it by changing `spotPrice`, `delta`, `spreadPrice`, or fee parameters to extract value or cause a loss. Because the setter is a single unrestricted transaction with no delay, the manipulation and the victim's transaction can land in the same block. Check:
+- Whether price or rate setters accessible to a privileged role are protected by a minimum timelock or commit-reveal scheme
+- Whether user-facing trade or deposit functions enforce slippage bounds that would revert the transaction if parameters were manipulated
+- Whether the privileged setter can be called in the same block (or same transaction bundle) as the operation it affects
+- Whether the setter emits an event that is detectable before the state change takes effect
+```solidity
+// BAD — owner can front-run any trade by zeroing the spot price
+function changeSpotPrice(uint128 newSpotPrice) external onlyOwner {
+    spotPrice = newSpotPrice; // immediate, no delay, no slippage guard for callers
+}
+```
+
+### Case 23: Incomplete admin transfer leaves dual-control state
+When an admin, owner, or default-admin role is transferred to a new address, an implementation bug (e.g., `_currentDefaultAdmin` not initialized, pending-owner not cleared on renounce, or `acceptOwnership` callable without waiting for the required delay) leaves both the old and the new admin with active privileges simultaneously, or leaves the contract in a broken half-transferred state. Check:
+- Whether the admin-transfer logic atomically clears the old role before confirming the new one
+- Whether a `_currentDefaultAdmin` or equivalent storage variable is correctly updated on every transfer, not just on the first one
+- Whether `renounceOwnership` properly clears any pending-owner address so it cannot be re-accepted later
+- Whether a two-step `transferOwnership` / `acceptOwnership` flow enforces that acceptance can only happen after the prescribed delay has elapsed (and that the delay cannot be bypassed by the pending owner)
+- Whether role-management contracts (e.g., `SingleAdminAccessControl`) correctly propagate the current admin in all code paths
+
+### Case 24: Admin can rig contest or raffle outcomes by minting tickets or disqualifying winners
+Contest, raffle, or rewards contracts give the admin the ability to mint unlimited participation tickets for themselves (diluting honest participants' odds) or to retroactively disqualify token holders / wave winners after outcomes are determined. This breaks the core fairness guarantee that the protocol advertises to users. Check:
+- Whether ticket-minting or entry-allocation functions accessible to a privileged role are capped and auditable on-chain
+- Whether a `ROLE(1)` or similar special role can be self-granted by the admin to bypass ticket-purchase limits
+- Whether winner disqualification or reward-token withdrawal functions can be called after a draw or wave has concluded
+- Whether the admin can whitelist their own address inside a CCIP prize-claim flow to intercept winner rewards before the winner can claim
+- Whether the prize or reward amount can be set to zero by the admin at any point after a user has won but before they have claimed

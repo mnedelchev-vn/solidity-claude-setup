@@ -177,3 +177,125 @@ A malicious contract can return an extremely large `bytes` payload from a call, 
 (bool success, ) = untrustedAddress.call(payload); // ignores returndata
 // or use assembly to copy only the bytes you need
 ```
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 17: Staking-on-behalf resets victim's cooldown/lock period
+Any function that lets a caller stake, deposit, or lock tokens for an arbitrary `receiver` without the receiver's consent can be abused to continuously reset the receiver's cooldown or warmup period, permanently blocking their withdrawal. Check:
+- Whether `stake(amount, receiver)` / `depositFor(receiver, amount)` / `lockFor(receiver, ...)` is callable by anyone with no minimum amount
+- Whether executing such a call resets or extends an existing lock/cooldown on the receiver's account
+- Whether a 1-wei deposit on behalf of a victim resets a warmup period, delaying the victim's withdrawal by another full cooldown window
+- Whether the protocol enforces a minimum stake amount or requires the receiver's explicit consent when someone stakes on their behalf
+
+```solidity
+// BAD — attacker can call repeatedly with 1 wei to reset victim's cooldown
+function stake(uint256 amount, address receiver) external {
+    warmUpInfo[receiver].expiry = block.timestamp + warmUpPeriod; // reset
+    _transfer(msg.sender, address(this), amount);
+}
+
+// GOOD — only allow self-stake, or require receiver approval
+function stake(uint256 amount) external {
+    warmUpInfo[msg.sender].expiry = block.timestamp + warmUpPeriod;
+    _transfer(msg.sender, address(this), amount);
+}
+```
+
+### Case 18: Voting-escrow MAX_DELEGATES array DoS
+Voting-escrow contracts that store delegated balances in a per-address array and enforce a hard cap (e.g., `MAX_DELEGATES = 1024`) allow any attacker to fill a victim's delegate array, locking their NFT/funds and preventing future delegation or transfer operations. Check:
+- Whether anyone can call `delegate(victim)` with a dust or 1-wei amount to push an entry into the victim's delegate array
+- Whether the delegate array is capped (e.g., 1024) and hitting the cap reverts all delegation/transfer calls for that address
+- Whether the protocol is deployed on chains with lower gas limits (Optimism, Arbitrum) where the iteration cost is proportionally higher
+- Whether there is a mechanism for the victim to purge stale/dust delegation entries
+
+### Case 19: Front-running CREATE2 deployment to DoS factory
+Protocols that compute a deterministic CREATE2 address from public parameters allow an attacker to pre-deploy a contract (or send 1 wei) to that address, causing the factory's deployment to revert with "contract already exists" or a `codehash` mismatch. Check:
+- Whether the CREATE2 salt is derived solely from public parameters (e.g., `keccak256(abi.encode(owner, params))`) that an attacker can observe in the mempool
+- Whether the factory checks `codehash` and reverts if a non-empty address exists at the target
+- Whether initialization (`initialize()`) of an upgradeable proxy is called in a separate transaction after deployment, allowing a front-runner to call it first
+- Whether the factory has a fallback that uses a user-specific nonce or timestamp to make the salt unpredictable
+
+### Case 20: Non-zero allowance DoS on USDT-style tokens
+Some tokens (USDT on mainnet) revert when `approve` is called with a non-zero value if a non-zero allowance already exists. Protocols that call `approve(spender, amount)` without first resetting to zero will permanently revert for these tokens once an approval already exists. Check:
+- Whether `token.approve(spender, newAmount)` is called without first calling `approve(spender, 0)` for tokens that require zero-first approval
+- Whether pool adapters or strategy contracts increase allowances incrementally rather than using `safeIncreaseAllowance` / resetting to zero first
+- Whether the protocol calls `approve` inside a loop or repeatedly across transactions, leaving residual allowances from previous rounds
+
+```solidity
+// BAD — reverts on second call for USDT if allowance > 0
+token.approve(spender, amount);
+
+// GOOD — reset first, or use safeIncreaseAllowance
+token.approve(spender, 0);
+token.approve(spender, amount);
+```
+
+### Case 21: Reward index overflow from dust totalSupply
+When a reward distributor tracks accrued rewards per token using an index scaled by a large factor, an extremely small `totalSupply` (dust amount) causes the index increment to overflow its storage type (e.g., `uint104`), permanently freezing reward accrual and blocking all token transfers that check the index. Check:
+- Whether reward index types are narrower than `uint256` (e.g., `uint104`, `uint128`) and could overflow given a dust `totalSupply`
+- Whether any path allows `totalSupply` to drop to near-zero (e.g., all users but one withdraw, or a market is created with a tiny seed deposit) while reward emissions continue
+- Whether overflow of the index is checked or handled (it should revert or cap gracefully, not silently wrap)
+- Whether the protocol enforces a minimum `totalSupply` or minimum deposit to keep the index well-behaved
+
+### Case 22: ERC-777 token send-hook DoS in swaps and batch operations
+ERC-777 tokens trigger `tokensToSend` and `tokensReceived` hooks on transfer. An attacker can register themselves as an ERC-1820 implementer for a victim address, then revert or consume excessive gas in the hook, causing any batch or swap involving that token to fail. Check:
+- Whether the protocol accepts arbitrary ERC-777 tokens as swap inputs or reward tokens
+- Whether batch settlement or distribution loops transfer ERC-777 tokens to user-controlled addresses whose hooks can revert
+- Whether the contract guards against re-entrant or gas-exhausting hooks by capping gas or using a non-hook-triggering transfer path
+- Whether ERC-777 compatibility is explicitly excluded or tested for tokens accepted by the protocol
+
+### Case 23: Unbounded per-user array flooding (locks, positions, NFTs)
+Protocols that allow a third party to push entries into a victim's per-account storage array (e.g., `userLocks[victim].push(...)`, `memorializePositions(tokenId, positions)`) enable an attacker to inflate the array to the point where any function that iterates over it exceeds the block gas limit, permanently freezing the victim's funds. Check:
+- Whether any function allows `msg.sender` to add entries to an array keyed by an arbitrary `recipient` / `tokenId` owned by someone else
+- Whether there is a maximum cap on the length of per-user arrays (locks, positions, deposit structs)
+- Whether functions like `withdraw`, `redeem`, or `claim` iterate over the entire user array without pagination
+- Whether a dust/1-wei amount is sufficient to add an entry, making the attack essentially free
+
+```solidity
+// BAD — attacker floods victim's locks array with 1-wei entries
+function lockFor(address recipient, uint256 amount) external {
+    userLocks[recipient].push(LockInfo(amount, block.timestamp));
+}
+
+// GOOD — cap array length or restrict who can add entries
+function lockFor(address recipient, uint256 amount) external {
+    require(userLocks[recipient].length < MAX_LOCKS_PER_USER, "too many locks");
+    require(msg.sender == recipient || authorized[recipient][msg.sender], "unauthorized");
+    userLocks[recipient].push(LockInfo(amount, block.timestamp));
+}
+```
+
+### Case 24: Cross-chain gas limit mismatch causing permanent message lock
+In cross-chain protocols, a user or attacker can specify a `gasLimit` for execution on the destination chain that either (a) exceeds the destination chain's block gas limit, making the message permanently unexecutable, or (b) is so low that the call always runs out of gas and the message queue is permanently blocked. Check:
+- Whether user-supplied `gasLimit` values for cross-chain messages are validated against a reasonable maximum on the source chain
+- Whether a message that fails due to out-of-gas on the destination chain is permanently stuck or can be retried with a different gas limit
+- Whether different destination chains have different block gas limits that the protocol accounts for
+- Whether the protocol uses a hardcoded gas reservation (e.g., `gasleft() >= gasLimit`) that can be trivially defeated by setting an astronomically large `gasLimit`
+
+### Case 25: Permissionless rate-limit/daily-quota exhaustion
+Protocols that enforce per-period rate limits (e.g., daily mint cap, hourly withdrawal quota) without restricting who can consume the quota allow any attacker to drain the limit in a single transaction, causing a DoS for legitimate users for the rest of the period. Check:
+- Whether rate-limiting counters are decremented by any caller, not just authorized users
+- Whether an attacker can consume the full daily quota with a single large transaction or many small ones at negligible cost
+- Whether the quota resets predictably (e.g., every 24 hours) and can be repeatedly exhausted at low cost
+- Whether consuming quota is reversible (e.g., cancelled orders should release quota back) and whether that release path can itself be abused
+
+### Case 26: 1-wei donation breaking exact-balance invariants and transitions
+Protocols that gate state transitions on an exact balance check (e.g., `require(token.balanceOf(address(this)) == 0)` or use raw `balanceOf` to measure deposit amounts) can be permanently DoS'd by an attacker sending a dust amount directly to the contract, causing all future operations that rely on that invariant to revert. Check:
+- Whether any state transition checks `balanceOf(address(this)) == 0` or `== expectedAmount` rather than using internal accounting
+- Whether the protocol uses `balanceOf(address(this))` as the source of truth for share/price calculations that can be manipulated by direct transfers
+- Whether an attacker can send 1 wei to a contract to prevent `addLiquidity`, graduation, or initialization from completing
+- Whether the protocol uses `sync()` or similar functions that an attacker can call after a donation to permanently lock in the manipulated state
+
+### Case 27: Ordered queue / linked-list corruption blocking all operations
+Protocols that maintain an ordered data structure (linked list, priority queue, FIFO queue) for orders or requests can be permanently DoS'd if a single corrupt, uncancellable, or reverted entry sits at the head, blocking all subsequent processing. Check:
+- Whether the queue processing function always starts from the head and cannot skip failed entries
+- Whether an order or request can be created that is impossible to cancel or remove (e.g., owner is `address(0)`, token is a reverted blacklisted address, or the cancel function itself is broken)
+- Whether a `prevOrderId` or `nextOrderId` pointer can become stale after a deletion, causing the linked list traversal to loop or skip entries
+- Whether there is an admin skip/rescue function to remove stuck entries from the queue head
+
+### Case 28: Hardcoded or excessively tight slippage causing perpetual DoS
+Protocols that hardcode a very tight slippage tolerance (e.g., 0.33% or 0.99%) for swaps, liquidity additions, or rebalancing will permanently revert those operations under normal market volatility, effectively DoS-ing core protocol functionality. Check:
+- Whether swap/LP/rebalance functions use a hardcoded `minAmountOut` or `maxSlippageBps` constant rather than an admin-configurable or caller-supplied parameter
+- Whether the hardcoded tolerance is so tight that routine price movements cause all such transactions to revert
+- Whether the slippage check is applied to intermediate calculations (e.g., flash-loan repayment, multi-hop swap) where rounding makes exact matches impossible
+- Whether there is a governance function to update slippage parameters, and whether that function can itself be DoS'd

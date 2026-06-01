@@ -169,3 +169,91 @@ Check:
 - Whether there is an explicit state variable that records the amount already distributed to each user, and whether it is updated on every successful claim
 - Whether the `totalAllocated` or supply cap is checked before minting/transferring to prevent over-distribution beyond the committed total
 - Whether a `claimable()` view function computes remaining balance correctly by subtracting already-claimed amounts, not re-adding initial releases
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 15: ERC20 transfer return value unchecked in claim / withdraw
+The `claim` or `withdraw` function calls `token.transfer()` or `token.transferFrom()` without checking the boolean return value and without using `safeTransfer`. Non-reverting ERC20 tokens silently return `false` on failure; the function continues, marks the allocation as claimed, and the user receives nothing — permanently locking their allocation. This exact pattern was found in MerkleVesting and related airdrop contracts across multiple audits.
+Check:
+- Whether every `transfer` / `transferFrom` call in the claim path uses OpenZeppelin `SafeERC20.safeTransfer` or explicitly asserts `require(token.transfer(...))` 
+- Whether the claimed-flag or "amount set to zero" update happens before a transfer that could silently fail, permanently consuming the allocation without delivering tokens
+- Whether a `withdraw` function that calls `token.transfer` handles the `false` return by reverting rather than silently continuing
+- Whether the contract is tested against a mock token that returns `false` on transfer
+```solidity
+// VULNERABLE — silent failure; allocation consumed, user receives nothing
+claimed[msg.sender] = true;
+token.transfer(msg.sender, amount); // returns false, no revert
+
+// SAFER
+claimed[msg.sender] = true;
+SafeERC20.safeTransfer(token, msg.sender, amount);
+```
+
+### Case 16: Claiming from a disputed or superseded Merkle tree
+In distributor systems that support a dispute window (e.g., off-chain oracle-pushed trees), the contract exposes a way to mark a tree as disputed, but `claim` still uses `getMerkleRoot()` — which may return the disputed (new) root rather than the last undisputed root, or may allow claims during the dispute period. A malicious actor can claim rewards from a tree that has been flagged for dispute but not yet resolved, locking in funds before a corrected root is published. Multiple Merkl-protocol and reward-distribution audits flag this exact pattern.
+Check:
+- Whether a `claim` function checks a "disputed" flag on the current tree and reverts if the tree is under dispute
+- Whether `getMerkleRoot()` or equivalent is called at claim time, and whether it can return a root that is currently disputed
+- Whether there is a time-lock or freeze between a dispute being raised and claims being accepted against the new root
+- Whether the contract distinguishes between the "pending" root and the "live" root, and enforces that only the live (undisputed) root is used for verification
+```solidity
+// VULNERABLE — claim proceeds even if current tree is disputed
+bytes32 root = distribution.getMerkleRoot(id); // may be disputed root
+require(MerkleProof.verify(proof, root, leaf));
+
+// SAFER
+require(!distribution.isDisputed(id), "tree under dispute");
+bytes32 root = distribution.getLiveRoot(id);
+require(MerkleProof.verify(proof, root, leaf));
+```
+
+### Case 17: Multi-distributor quest/period tree mixing — wrong tree accepted for a different reward slot
+A single `MultiMerkleDistributor` contract manages many quests and time periods, each with its own tree and reward token. If the `claim` function does not verify that the submitted proof belongs to the specific `(questId, period)` combination being claimed, a valid proof from quest A / period 1 can be submitted against quest B / period 2, draining a different reward pool. Wardens flagged this across multiple Paladin-protocol and multi-reward-distributor audits.
+Check:
+- Whether the leaf encodes both the `questId` and the `period` (or equivalent round identifier) so that a proof from one slot cannot verify against a different slot's root
+- Whether `claim(questId, period, account, amount, proof)` retrieves the root keyed to `(questId, period)` and not a shared or global root
+- Whether the contract validates that `questId` and `period` passed by the caller match the identifiers committed in the leaf
+- Whether an `emergencyUpdateQuestPeriod` / root-replacement path re-indexes the tree in a way that could allow existing valid proofs to verify against the new mapping
+```solidity
+// VULNERABLE — leaf does not bind questId/period; proof from quest A verifies against quest B root
+bytes32 leaf = keccak256(abi.encodePacked(account, amount));
+
+// SAFER
+bytes32 leaf = keccak256(abi.encodePacked(questId, period, account, amount));
+```
+
+### Case 18: Uninitialized or zero merkleRoot accepted — trivially forgeable proofs
+If the contract does not guard against a zero (uninitialized) `merkleRoot`, an attacker can call `claim` before any legitimate root has been set. OpenZeppelin's `MerkleProof.verify` returns `true` when `proof` is empty and `leaf == root`; with `root == bytes32(0)`, a caller who passes `leaf = bytes32(0)` and an empty proof receives a successful verification. Multiple 1inch Cumulative Merkle Drop audits and airdrop contract reviews flag this initialization gap.
+Check:
+- Whether the constructor or initializer enforces `merkleRoot != bytes32(0)` before the contract is considered live
+- Whether `setMerkleRoot` rejects `bytes32(0)` to prevent accidentally clearing the root and opening trivial proofs
+- Whether any per-tier or per-window root can be left at its zero default and still be passed to `verify`
+- Whether the contract has a "not yet initialized" state check that blocks claims until a valid root is set
+```solidity
+// VULNERABLE — zero root allows empty-proof forgery
+function claim(..., bytes32[] calldata proof) external {
+    bytes32 leaf = keccak256(abi.encodePacked(account, amount));
+    require(MerkleProof.verify(proof, merkleRoot, leaf)); // passes if merkleRoot==0 and leaf==0
+}
+
+// SAFER
+require(merkleRoot != bytes32(0), "root not initialized");
+```
+
+### Case 19: Silent non-revert on bad proof — affiliate fees or secondary effects silently skipped
+Some claim functions treat a failed Merkle proof verification as a soft condition: they `return false` rather than `revert`, allowing the outer transaction to succeed while silently skipping the proof-gated effect (e.g., paying an affiliate fee, minting a bonus, or recording a referral). Callers and integrators assume the full side-effect executed if the transaction succeeded, leading to under-payment or lost fees that are never retried. Multiple NFT-mint and affiliate-distribution audits document this exact silent-skip pattern.
+Check:
+- Whether any `verify`-gated code path uses `return false` / `continue` rather than `revert` on proof failure, and whether callers can detect or handle the silent skip
+- Whether affiliate, referral, or bonus payments are inside a Merkle-gated branch that silently no-ops on a bad proof rather than reverting the whole transaction
+- Whether a batch-claim loop suppresses individual proof failures with a `continue`, making it impossible for the caller to know which claims succeeded
+- Whether the function's return value or event emission clearly signals a skipped proof-gated effect so off-chain systems can re-attempt or alert
+```solidity
+// VULNERABLE — bad proof silently skips affiliate payment; no revert, no event
+if (MerkleProof.verify(affiliateProof, affiliateRoot, leaf)) {
+    _payAffiliate(affiliate, fee);
+} // silent skip if proof is wrong or stale — caller never knows
+
+// SAFER
+require(MerkleProof.verify(affiliateProof, affiliateRoot, leaf), "bad affiliate proof");
+_payAffiliate(affiliate, fee);
+```

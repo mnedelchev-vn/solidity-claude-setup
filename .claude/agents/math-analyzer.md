@@ -309,3 +309,126 @@ Multiple sequential rounding operations compound and can create significant cumu
 - Whether multi-step calculations (e.g., convert → apply fee → convert back) accumulate rounding errors
 - Whether the protocol combines several rounded intermediate values that compound the error
 - Whether the final result of a round-trip operation (deposit → withdraw) differs from the input by more than 1 wei per step
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 31: Inconsistent time-boundary rounding in governance/escrow
+Protocols that snap lock-end times to week (or epoch) boundaries must apply the same rounding consistently across every function that reads or writes the lock time. If `createLock` rounds down to the week but `extendLock` does not (or vice versa), the checkpoint system sees inconsistent durations, inflating or deflating voting power and breaking reward distributions. Check:
+- Whether every function that sets or extends a lock end time applies the same rounding rule (e.g., `(t / WEEK) * WEEK`)
+- Whether view functions that compute voting power or reward entitlement use the rounded value rather than the raw timestamp
+- Whether a mismatch between write-path rounding and read-path rounding allows users to accumulate more voting power than entitled
+```solidity
+// BAD — createLock rounds down, extendLock stores raw timestamp
+lockEnd = (unlockTime / WEEK) * WEEK;          // rounded in create
+lockEnd = block.timestamp + extraDuration;      // NOT rounded in extend — diverges
+
+// GOOD — same rounding everywhere
+lockEnd = ((block.timestamp + extraDuration) / WEEK) * WEEK;
+```
+
+### Case 32: Reward rate truncation permanently locks dust in streaming contracts
+When a streaming/farming contract stores reward rate as `rewardAmount / duration`, the integer division floors the rate. The tokens corresponding to the truncated remainder are distributed at rate 0 and become permanently irrecoverable in the contract. The problem compounds every time `notifyRewardAmount` is called with leftover from the previous period. Check:
+- Whether `rewardRate = amount / duration` silently drops tokens when `amount % duration != 0`
+- Whether residual undistributed tokens from previous reward periods are correctly rolled into the new rate rather than abandoned
+- Whether the contract emits or tracks the exact amount that will actually be streamed (vs. the amount deposited)
+```solidity
+// BAD — dust stays locked forever
+rewardRate = rewardAmount / rewardsDuration; // truncates; rewardAmount % rewardsDuration tokens are lost
+
+// GOOD — roll remainder into new rate
+uint256 remaining = rewardsDuration - (block.timestamp - periodFinish); // time left
+uint256 leftover  = remaining * rewardRate;
+rewardRate = (rewardAmount + leftover) / rewardsDuration;
+```
+
+### Case 33: Oracle price / token amount decimal mismatch in value calculation
+When computing the USD (or base-token) value of an amount, the formula is `amount * price / pricePrecision`. If `price` carries its own decimal scale (e.g., Chainlink returns 8-decimal prices) and the token itself has a non-18 decimal count, the result is off by a factor of `10^(tokenDecimals - pricePrecision)`. This is distinct from Case 9 (cross-token mismatch) and Case 27 (double-scaling) — here the error is in combining *oracle decimals* with *token decimals*. Check:
+- Whether the formula correctly accounts for both `token.decimals()` and the oracle's own decimal precision
+- Whether the normalization `10 ** (18 - tokenDecimals + 18 - oracleDecimals)` (or equivalent) is applied before comparison or further arithmetic
+- Whether hardcoded assumptions like `/ 1e18` or `/ 1e8` remain correct for all whitelisted token/oracle pairs
+```solidity
+// BAD — assumes 18-decimal token + 18-decimal oracle; breaks for USDC (6) + Chainlink (8)
+uint256 valueUSD = amount * oraclePrice / 1e18;
+
+// GOOD — normalize both
+uint256 valueUSD = amount
+    * oraclePrice
+    * 10 ** (18 - token.decimals())
+    / 10 ** oracle.decimals();
+```
+
+### Case 34: Interest-free (or near-zero) loan via borrow-index ratio truncation
+Compound-style protocols compute accrued interest as `principal * (currentIndex / snapshotIndex) - principal`. When both indices are close in value, the ratio truncates to `1` in integer math, yielding zero interest. An attacker can take out a small, short-duration borrow and repay with no interest owed. Check:
+- Whether the interest delta is computed as `principal * currentIndex / snapshotIndex - principal` (subject to ratio truncation) rather than `principal * (currentIndex - snapshotIndex) / snapshotIndex`
+- Whether there is a minimum borrow size or minimum elapsed time that prevents the ratio from rounding to `1`
+- Whether the interest formula is tested with small principals and small index deltas
+```solidity
+// BAD — ratio rounds to 1 when indices are close, interest = 0
+uint256 interest = (principal * currentIndex / snapshotIndex) - principal;
+
+// BETTER — compute delta first, avoiding ratio truncation
+uint256 interest = principal * (currentIndex - snapshotIndex) / snapshotIndex;
+```
+
+### Case 35: Rounding-up in reward-index update traps fractional rewards permanently
+When a per-LP reward index is updated with `mulDivUp` (ceiling division) to "protect the protocol," each update overshoots by up to 1 unit. Over many updates the index accumulates phantom credit that no LP can ever claim, locking the excess permanently in the contract. Check:
+- Whether `rewardsPerLP` or similar accumulators use ceiling division during the *update* step (only withdrawal calculations should round up)
+- Whether the total rewards credited via the index can exceed the actual rewards deposited
+- Whether a test confirms `sum of all claimable rewards <= total rewards deposited`
+```solidity
+// BAD — rounding up on every index update inflates the index
+rewardsPerLPQ128 += FullMath.mulDivRoundingUp(newRewards, Q128, totalLiquidity);
+
+// GOOD — round down on accumulation; round up only when computing user debt/payout in their favor
+rewardsPerLPQ128 += FullMath.mulDiv(newRewards, Q128, totalLiquidity);
+```
+
+### Case 36: Step/vesting duration rounding to zero causes unclaimable tokens
+Vesting or epoch-based contracts that derive a per-step duration by dividing total duration by number of steps can produce `stepDuration = 0` when `steps > totalDuration`. All claims then revert or return zero forever, permanently locking the deposited tokens. Similarly, a `rewardRate` derived by dividing a small reward over a long duration rounds to zero, meaning no tokens are ever streamed. Check:
+- Whether `stepDuration = totalDuration / numSteps` is validated to be > 0 before the schedule is created
+- Whether `rewardRate = totalReward / duration` is validated to produce a non-zero rate for the given token decimals and duration
+- Whether a minimum step size (in seconds or token units) is enforced relative to the token's decimal granularity
+```solidity
+// BAD — stepDuration silently becomes 0 if numSteps > totalDuration
+uint256 stepDuration = vestingDuration / numSteps;
+// subsequent claims: elapsed / stepDuration → division by zero or no progress
+
+// GOOD — validate before storing
+require(vestingDuration / numSteps > 0, "step duration rounds to zero");
+```
+
+### Case 37: TWAP arithmetic rounds in wrong direction for negative tick deltas
+Uniswap V3-style TWAPs compute the average tick as `tickCumulativeDelta / timeDelta`. When `tickCumulativeDelta` is negative (price has been declining), integer division in Solidity truncates *toward zero* (rounds up in magnitude), producing a tick that is one higher than the true floor. The correct behavior for negative deltas is to subtract 1 from the truncated result. Without this correction, the reported TWAP price is slightly above the true geometric mean, which misprices options, liquidations, and any oracle consumer. Check:
+- Whether the TWAP tick calculation applies `- 1` when `tickCumulativeDelta < 0 && tickCumulativeDelta % timeDelta != 0`
+- Whether this matches Uniswap's reference implementation in `OracleLibrary.consult`
+- Whether downstream consumers (liquidation bots, option pricing) are sensitive to a 1-tick error
+```solidity
+// BAD — Solidity truncates toward zero, giving wrong result for negative delta
+int24 avgTick = int24(tickCumulativeDelta / int56(timeDelta));
+
+// GOOD — mirror Uniswap's correction for negative remainders
+int24 avgTick = int24(tickCumulativeDelta / int56(timeDelta));
+if (tickCumulativeDelta < 0 && (tickCumulativeDelta % int56(timeDelta) != 0)) {
+    avgTick--;
+}
+```
+
+### Case 38: Add/remove liquidity use opposite rounding on the same token-rate, creating arbitrage
+When a pool calculates token amounts for `addLiquidity` and `removeLiquidity` from the same internal rate, both operations must round in the *same unfavorable direction for the user* (round up amounts owed, round down amounts received). If `addLiquidity` rounds up the required deposit and `removeLiquidity` also rounds up the returned amount (or vice versa), a user can cycle add/remove to extract value. The same applies to buy/sell pairs in bonding curves. Check:
+- Whether `addLiquidity` and `removeLiquidity` (or `buy` and `sell`) use rounding directions that are *consistently unfavorable to the caller*
+- Whether a single add → immediate remove round-trip returns more than was deposited (within 1 wei tolerance)
+- Whether rounding inconsistencies are exploitable at scale via repeated cycling
+```solidity
+// BAD — both functions round UP token amounts returned to/from user; add→remove is profitable
+function addLiquidity(uint256 lpAmount) {
+    uint256 tokenRequired = Math.mulDivUp(lpAmount, tokenReserve, totalLP); // rounds UP — ok for add
+}
+function removeLiquidity(uint256 lpAmount) {
+    uint256 tokenReturned = Math.mulDivUp(lpAmount, tokenReserve, totalLP); // rounds UP — bad for remove, leaks value
+}
+
+// GOOD — remove rounds DOWN (protocol keeps the fractional wei)
+function removeLiquidity(uint256 lpAmount) {
+    uint256 tokenReturned = Math.mulDiv(lpAmount, tokenReserve, totalLP); // rounds DOWN — safe
+}
+```

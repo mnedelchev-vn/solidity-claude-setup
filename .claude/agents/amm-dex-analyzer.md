@@ -173,3 +173,162 @@ Protocols that automatically rebalance concentrated liquidity positions. Check:
 - Whether rebalancing in a single transaction with large positions causes excessive price impact
 - Whether the rebalancing frequency is appropriate (too frequent = high fees/gas, too infrequent = out-of-range)
 - Whether rebalancing correctly collects fees before closing the old position
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 15: slot0 spot price used for critical calculations
+Using `pool.slot0()` to obtain `sqrtPriceX96` or the current tick for any pricing, collateral valuation, or swap-limit calculation is trivially manipulable within a single transaction. Developers frequently reach for it because it is the simplest price read, but it reflects the instantaneous post-last-swap price which any actor can move via a flash loan. Check:
+- Whether `slot0().sqrtPriceX96` or `slot0().tick` is used to compute token amounts, collateral ratios, or mint/burn quantities
+- Whether the same value is used to derive a `sqrtPriceLimitX96` parameter passed into a swap (allows an attacker to force a partial fill or control execution price)
+- Whether any rebalancing, deposit, or liquidation logic derives price from `slot0` without TWAP or oracle validation
+- Whether the codebase confuses `slot0` (mutable, manipulable) with `observe()` / TWAP (time-averaged, harder to move)
+- Whether there is at least a deviation check between `slot0` price and an external oracle before acting on it
+```solidity
+// BAD — trivially manipulable via flash loan
+(uint160 sqrtPriceX96, , , , , , ) = pool.slot0();
+uint256 price = uint256(sqrtPriceX96) * uint256(sqrtPriceX96) / (1 << 192);
+
+// GOOD — use a TWAP with a meaningful window
+uint32[] memory secondsAgos = new uint32[](2);
+secondsAgos[0] = TWAP_WINDOW; secondsAgos[1] = 0;
+(int56[] memory tickCumulatives, ) = pool.observe(secondsAgos);
+int24 twapTick = int24((tickCumulatives[1] - tickCumulatives[0]) / int56(uint56(TWAP_WINDOW)));
+```
+
+### Case 16: Missing swap deadline allows stale transaction execution
+Swap transactions without a `deadline` parameter can sit in the mempool and execute at an arbitrarily later time when market conditions have moved unfavorably. This is a well-known pitfall in Uniswap integrations — the `deadline` field exists precisely to bound execution time. Check:
+- Whether calls to Uniswap V2/V3 routers pass `deadline: block.timestamp` (effectively no deadline) rather than a caller-supplied future timestamp
+- Whether the protocol's own swap entrypoints accept and enforce a `deadline` from callers
+- Whether `ExactInputSingleParams` or `ExactInputParams` structs are constructed with `deadline` left as zero or as a compile-time constant
+- Whether wrapped swap helpers omit forwarding the deadline from the outer call
+```solidity
+// BAD — deadline = 0 causes immediate revert OR is passed as block.timestamp by caller with no expiry intent
+ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+    ...
+    deadline: 0   // reverts immediately in Uniswap V3; or block.timestamp = no protection
+});
+
+// GOOD — caller passes a meaningful deadline
+ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+    ...
+    deadline: deadline  // passed in from caller
+});
+```
+
+### Case 17: Hardcoded zero or on-chain-computed slippage allows sandwich attacks
+Setting `amountOutMin = 0`, `amount0Min = 0 / amount1Min = 0`, or computing the minimum output entirely from the on-chain spot price gives MEV bots a free sandwich opportunity. This pattern recurs when developers prioritize convenience or omit slippage parameters from permissioned/internal calls, mistakenly believing they are safe. Check:
+- Whether any public swap, `addLiquidity`, or `removeLiquidity` call passes hardcoded zero for minimum output/input amounts
+- Whether minimum amounts are computed from `slot0` or pool reserves at execution time (same block can be manipulated)
+- Whether the protocol has a blanket "internal" swap where slippage is intentionally bypassed with `amountOutMin = 0`
+- Whether automated operations (harvest, compound, rebalance) execute swaps without caller-provided slippage bounds
+- Whether `sqrtPriceLimitX96` is used as the sole slippage control in V3 (it only stops execution mid-swap, it does not revert)
+
+### Case 18: Unprotected Uniswap V3 mint/swap callback
+The `uniswapV3MintCallback` and `uniswapV3SwapCallback` functions must only be callable by the specific pool they were initiated from; without an access-control check any caller can invoke them and drain approved tokens. Because Solidity interfaces require these functions to be externally visible, developers often forget to add the pool-identity guard. Check:
+- Whether `uniswapV3MintCallback` validates that `msg.sender` equals the expected pool address (derived from the factory with the correct token order and fee)
+- Whether `uniswapV3SwapCallback` performs the same check before transferring tokens to `msg.sender`
+- Whether the callback data (`data` parameter) is decoded to recover the initiating pool identity and compared against `msg.sender`
+- Whether a `callbackData` struct carries and validates the payer/pool so an attacker cannot supply crafted callback data
+```solidity
+// BAD — no access control; anyone can call and drain approved tokens
+function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata data) external {
+    (address token0, address token1) = abi.decode(data, (address, address));
+    IERC20(token0).transferFrom(payer, msg.sender, amount0Owed);
+}
+
+// GOOD — verify caller is the legitimate pool
+function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata data) external {
+    CallbackData memory decoded = abi.decode(data, (CallbackData));
+    address expectedPool = PoolAddress.computeAddress(factory, decoded.poolKey);
+    require(msg.sender == expectedPool, "not pool");
+    IERC20(decoded.token0).transferFrom(decoded.payer, msg.sender, amount0Owed);
+}
+```
+
+### Case 19: Incorrect token order assumption for Uniswap pair reserves
+`IUniswapV2Pair.getReserves()` always returns `(reserve0, reserve1)` where `token0 < token1` by address sort order, not by the order the developer supplied tokens during pair creation. Code that assumes `reserve0` corresponds to a specific semantic token (e.g., "the input token") will silently compute wrong swap amounts when the address sort order differs from the developer's expectation. Check:
+- Whether `getReserves()` results are used without first checking which of `token0()`/`token1()` corresponds to the desired token
+- Whether price calculation or `getAmountOut` calls pass `reserveIn`/`reserveOut` in an order derived from external configuration rather than from the pair's actual `token0`/`token1` getters
+- Whether multi-hop routing code reuses a single "token order" assumption across different pairs
+- Whether the pool address is recomputed with tokens in the correct sorted order (wrong order → wrong CREATE2 address)
+```solidity
+// BAD — assumes tokenA is always token0
+(uint256 reserveA, uint256 reserveB, ) = pair.getReserves();
+
+// GOOD — check sort order
+(uint256 reserve0, uint256 reserve1, ) = pair.getReserves();
+(uint256 reserveIn, uint256 reserveOut) = tokenIn == pair.token0()
+    ? (reserve0, reserve1)
+    : (reserve1, reserve0);
+```
+
+### Case 20: Unspent tokens/ETH not refunded after swap
+Router and vault contracts that pull `amountInMax` upfront for exact-output swaps (or receive ETH for ETH→token swaps) but do not refund the unused portion leave tokens permanently locked or silently credited to the wrong party. This is a chronic issue in wrappers around `exactOutput` and `swapTokensForExactETH`-style calls. Check:
+- Whether after an exact-output swap the difference between `amountInMax` and the actual `amountIn` is returned to the caller
+- Whether ETH sent in excess of what the swap consumed is swept back; look for a `refundETH()` call or equivalent
+- Whether helper functions that call `exactOutput` through intermediate hops return leftover intermediate tokens
+- Whether any native-token swap path accounts for the router charging fees on the output, reducing the received amount below what was calculated
+- Whether `msg.value` is fully accounted for (not silently absorbed by the contract)
+
+### Case 21: Wrong init code hash in UniswapV2Library.pairFor breaks address derivation
+Forks of Uniswap V2 that copy `UniswapV2Library.pairFor` but forget to update the hardcoded `init code hash` will compute the wrong pair address. Since the address is wrong, calls go to a non-existent (or attacker-controlled) contract and the transaction silently uses incorrect pricing or fails. Check:
+- Whether the init code hash in `pairFor` (or equivalent `computeAddress`) matches the `keccak256` of the deployed pair bytecode in the target deployment
+- Whether the protocol ever deploys on multiple chains/forks and uses a chain-specific hash
+- Whether any `CREATE2`-based pool address computation uses a hardcoded salt or hash that differs from the actual factory's deployment parameters
+- Whether the pair lookup falls back to the factory `getPair` when the computed address returns no code (a safer pattern)
+
+### Case 22: Fee growth underflow must remain unchecked in concentrated liquidity forks
+Uniswap V3's fee accounting relies on deliberate uint256 wraparound (underflow) when computing `feeGrowthInside`. Solidity ≥ 0.8 reverts on underflow by default. Forks that port V3 math without wrapping the relevant subtraction in `unchecked {}` will revert during normal operations whenever a position spans a tick that was crossed before the position was opened. Check:
+- Whether `feeGrowthInside` / `secondsPerLiquidityInside` computations are inside `unchecked {}` blocks
+- Whether `FullMath.sol` and `TickMath.sol` imported from Uniswap V3 were adapted for Solidity 0.8 overflow semantics (they require `unchecked` in several places)
+- Whether `rangeFeeGrowth` or equivalent "outside" fee accumulator arithmetic can revert under normal tick-crossing scenarios
+- Whether the same unchecked pattern is applied to `secondsPerLiquidity` calculations in staker/gauge contracts
+```solidity
+// BAD — reverts when feeGrowthBelow > feeGrowthGlobal (expected wraparound)
+uint256 feeGrowthInside = feeGrowthGlobal - feeGrowthBelow - feeGrowthAbove;
+
+// GOOD — intentional wraparound matches V3 spec
+unchecked {
+    feeGrowthInside = feeGrowthGlobal - feeGrowthBelow - feeGrowthAbove;
+}
+```
+
+### Case 23: Multi-hop router passes wrong intermediate amount between hops
+In custom multi-hop routers, the output of hop N must become the exact input for hop N+1. Bugs occur when the intermediate variable is not updated after the first swap, when fees are not deducted before the next hop, or when the final output is written from an uninitialized variable. Check:
+- Whether the `amountOut` variable is correctly reassigned after each hop before being passed to the next pool's swap call
+- Whether fee deductions (e.g., pool fees or router fees) are applied to the intermediate amount before the next hop consumes it
+- Whether paths longer than two hops have been tested end-to-end (many bugs only manifest on 3+-hop paths)
+- Whether the recipient address for intermediate hops is the router itself (not the final recipient) so the tokens are available for the next swap
+- Whether exact-output multi-hop paths correctly propagate `amountInMaximum` backwards through the path
+
+### Case 24: Arbitrary external call in swap executor steals user approvals
+Protocols that accept user-supplied calldata or pool addresses and pass them to an external `call()` without validation allow an attacker to craft a call that invokes `transferFrom` on any ERC-20 that a victim has approved to the contract. This pattern appears in generic swap aggregators, zap contracts, and "arbitrary DEX" adapters. Check:
+- Whether the contract performs `address(target).call(data)` with caller-controlled `target` or `data`
+- Whether the `data` payload is validated to ensure it is a legitimate swap call (not a `transferFrom` to the attacker)
+- Whether the router/target address is restricted to a whitelist of known AMMs or is fetched from an immutable factory
+- Whether the payer in callback data or delegatecall context is validated against `msg.sender` rather than taken from untrusted input
+- Whether approved-token sweeps are possible: can an attacker set themselves as the swap recipient and supply token addresses approved by the contract?
+
+### Case 25: TWAP observation cardinality insufficient for the configured window
+Uniswap V3 pools are deployed with `observationCardinality = 1`. If a protocol's TWAP oracle uses a window (e.g., 30 minutes) that requires more observations than have been stored, `pool.observe()` will revert with `OLD`, blocking critical operations such as deposits, liquidations, or price reads. Check:
+- Whether `pool.increaseObservationCardinalityNext(n)` is called during pool setup to ensure enough slots for the desired TWAP window
+- Whether the protocol has a fallback or graceful degradation path if `observe()` reverts due to insufficient history
+- Whether the minimum required cardinality is calculated from `TWAP_WINDOW / expected_block_time` and rounded up
+- Whether a malicious actor can exploit the revert (e.g., to block liquidations) by ensuring the pool never accumulates enough observations
+- Whether the `observationCardinality` is validated at oracle initialization time, not just assumed to be sufficient
+
+### Case 26: LP/position state not updated on ERC-20 or NFT transfer
+When LP tokens or position receipts are transferred to a new owner, any state that tracks per-address balances (reward indices, deposit values, cool-down timestamps, island shares) must be updated atomically. Failure to do so lets the original holder retain stale entitlements or lets the receiver exploit inflated claims. Check:
+- Whether an `_beforeTokenTransfer` / `_afterTokenTransfer` hook updates all per-address accounting when LP tokens are transferred
+- Whether cool-down periods for deposit/withdrawal are enforced per token holder, not per token (bypassed by transferring to a fresh address)
+- Whether reward index snapshots are taken for both sender and receiver at transfer time
+- Whether wrapping a position NFT (e.g., in an ERC-6909 wrapper) preserves the `tokensOwed` accounting and decrements it correctly on partial unwrap
+- Whether "deposit value" or "fee basis" fields used for fee-on-exit calculations are reset to current value on transfer (preventing fee evasion via transfer-then-exit)
+
+### Case 27: Balancer totalSupply vs. virtualSupply / getActualSupply confusion
+Balancer Composable/Boosted pools mint BPT to themselves as a "pre-minted" reserve; `totalSupply()` therefore includes this phantom supply. Protocols that use `totalSupply()` instead of `getActualSupply()` (or `virtualSupply()` for older pools) will severely over-estimate the denominator when pricing BPT, computing weights, or determining exit amounts, leading to incorrect valuations and potential theft of unclaimed yield. Check:
+- Whether any Balancer pool integration calls `totalSupply()` on a Composable Stable Pool or Boosted Pool to compute BPT price or share ratios
+- Whether `getActualSupply()` is used where the pool type warrants it (Composable Stable, Linear pools)
+- Whether `virtualSupply()` is used for older MetaStable / BoostedPool implementations
+- Whether the protocol distinguishes between pool types before choosing the supply function
+- Whether LP token valuation formulas that divide by total supply are tested against pools that have pre-minted BPT

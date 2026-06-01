@@ -310,3 +310,101 @@ Assuming 1:1 pegs for stablecoins or wrapped tokens ignores real-world depegging
 - Whether WBTC is assumed to always equal BTC (WBTC frequently trades at a discount)
 - Whether stETH/wstETH is assumed to always equal ETH
 - Whether the protocol uses actual oracle prices for these assets instead of hardcoded values
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 23: Pyth negative exponent not correctly normalized
+When Pyth returns a price with a negative `expo` (e.g., `price = 5, expo = -5` means `0.00005`), naively computing `price * 10**expo` treats the exponent as unsigned and produces a massively inflated or zero value. This appeared across multiple protocols (Perennial, PythPriceOracle, NarwhalPriceAggregator). Check:
+- Whether the code checks for `price.expo < 0` before computing the scaled price
+- Whether the formula correctly handles negative exponents: `scaledPrice = price / 10**(-expo)` when expo is negative
+- Whether the result is further normalized to the protocol's expected decimal precision (e.g., 18 or 8 decimals)
+```solidity
+// BAD — treats expo as unsigned, explodes if expo is negative
+uint256 scaledPrice = uint256(price.price) * (10 ** uint256(int256(price.expo)));
+
+// GOOD — handle negative expo explicitly
+int256 expo = price.expo;
+uint256 scaledPrice;
+if (expo >= 0) {
+    scaledPrice = uint256(price.price) * 10 ** uint256(expo);
+} else {
+    scaledPrice = uint256(price.price) / 10 ** uint256(-expo);
+}
+```
+
+### Case 24: Chainlink roundId phase-ID jump causes DoS or binary-search failure
+Chainlink's `roundId` encodes both a `phaseId` and an `aggregatorRoundId`. When a feed's aggregator is upgraded, the `phaseId` increments and `roundId` jumps by `2**64`, making the previous round appear far in the past. Protocols that binary-search historical round data or assume `roundId` increments by 1 will either revert or silently use incorrect historical prices. Check:
+- Whether any code iterates or binary-searches historical Chainlink rounds (e.g., to find a price at a given timestamp)
+- Whether the code assumes `currentRoundId - 1` returns the immediately prior round (breaks on phase change)
+- Whether the protocol correctly decodes `phaseId` and `aggregatorRoundId` from the packed `roundId` before iterating
+- Whether a phase switchover would cause an infinite loop or out-of-bounds access
+
+### Case 25: Balancer BPT oracle uses totalSupply() instead of getActualSupply()
+For newer Balancer pool types (Composable Stable Pools, Boosted Pools), `totalSupply()` includes pre-minted BPT that is not actually in circulation, inflating the computed BPT price. The correct method is `getActualSupply()` (or `getVirtualSupply()` for older MetaStable pools). Multiple audits found protocols computing BPT price as `poolValue / totalSupply()` leading to severe under-valuation or over-valuation. Check:
+- Whether BPT token price is calculated using `totalSupply()` on Composable or Boosted Balancer pools
+- Whether the pool interface exposes `getActualSupply()` or `getVirtualSupply()` and that is used instead
+- Whether the pool type (weighted, stable, composable, boosted) is correctly identified before choosing the supply method
+```solidity
+// BAD — uses totalSupply which includes pre-minted BPT
+uint256 bptPrice = poolValue / IERC20(pool).totalSupply();
+
+// GOOD — use getActualSupply for composable pools
+uint256 bptPrice = poolValue / IComposableStablePool(pool).getActualSupply();
+```
+
+### Case 26: Redstone oracle allows timestamp regression (older price replaces newer)
+Redstone's pull-oracle model requires the caller to append signed price data to calldata. If the validation logic compares the submitted timestamp only against a maximum age (e.g., 3 minutes) but not against the last cached timestamp, an attacker can replay an older (but still within the window) price update to override a more recent cached price. Multiple findings identified this in `RedstoneCoreOracle`. Check:
+- Whether the Redstone integration compares the incoming price timestamp against the currently cached timestamp and reverts if the new timestamp is older
+- Whether the staleness window is appropriate for each specific feed's heartbeat (a single constant for all feeds is dangerous)
+- Whether the Redstone calldata payload size is validated against the expected number of signers (too-small buffer causes silent failure)
+- Whether all data packages in a multi-signer payload are guaranteed to have the same timestamp (SDK does not enforce this)
+
+### Case 27: TWAP cumulative price updated after reserve change, enabling manipulation
+In custom TWAP implementations (Balancer, MagicLP, pump contracts), the cumulative price accumulator must be updated using the price *before* any reserve change occurs. If `priceCumulative` is updated *after* reserves are modified, the new observation records the post-swap price as if it had been active for the full elapsed interval, allowing an attacker to skew the TWAP within a single block. Check:
+- Whether `priceCumulative += spotPrice * timeElapsed` is called before or after reserve/state changes in the same function
+- Whether `update()` or equivalent is the first operation in swap/deposit/withdraw functions that affect reserves
+- Whether the TWAP observation correctly records the price that was valid during the *elapsed period*, not the price *after* the current operation
+```solidity
+// BAD — cumulative updated after reserves change; skews TWAP
+reserves = newReserves;
+priceCumulative += (reserves[1] / reserves[0]) * timeElapsed; // uses new price
+
+// GOOD — snapshot price before changing state
+priceCumulative += currentSpotPrice * timeElapsed; // uses old price
+reserves = newReserves;
+```
+
+### Case 28: ERC4626 vault token oracle using convertToAssets() without accounting for losses
+When valuing an ERC4626 vault share as collateral, using `convertToAssets(1e18)` (which returns `totalAssets / totalSupply`) can be manipulated via donation attacks or fails to account for vault losses during liquidations. Multiple audits found that the YTokenOracle, ERC4626Oracle, and similar wrappers could be inflated or deflated in a single transaction. Check:
+- Whether the ERC4626 share price oracle uses `convertToAssets()` based on live `totalAssets` (susceptible to donation/inflation)
+- Whether vault losses (e.g., from slashing, bad debt) are immediately reflected in the oracle price, potentially causing cascading liquidations
+- Whether the vault oracle uses a TWAP or snapshot mechanism to dampen price manipulation
+- Whether the oracle correctly handles cases where the vault's `totalSupply` is zero (potential division by zero)
+
+### Case 29: Oracle not updated before price is read in pull-based systems
+Beyond Pyth, many protocols use internal or external pull-based oracles (Redstone, manual update oracles, TWAP oracles) where a fresh price must be explicitly pushed before reading. If functions that consume the price do not first call `update()` / `updatePrice()`, they silently operate on a stale cached value. This was found repeatedly in reward managers, liquidation logic, and lending functions. Check:
+- Whether every code path that reads a price from an updateable oracle also calls the oracle's update function first
+- Whether the update and the read are atomic (in the same transaction), or whether stale cached values can be exploited across blocks
+- Whether there is any function that reads the oracle price without ensuring it has been refreshed (especially view functions called by non-view functions)
+- Whether Redstone's `updatePrice()` or similar is called inside the same modifier/function that consumes the price
+
+### Case 30: API3 / push-oracle timestamp can be set to a future value causing underflow revert
+Some oracle adapters (API3, custom push oracles) allow the oracle data timestamp to be set to a future value. If the consumer computes staleness as `block.timestamp - datapoint.timestamp` without first checking that `datapoint.timestamp <= block.timestamp`, the subtraction underflows in Solidity (with checked arithmetic), reverting all calls and bricking the oracle. Check:
+- Whether the staleness check first validates `updatedAt <= block.timestamp` before computing `block.timestamp - updatedAt`
+- Whether the oracle source can ever report a timestamp greater than the current block timestamp (API3 nodes have been observed to do this)
+- Whether a revert in the staleness check propagates to block deposits, withdrawals, or liquidations (DoS risk)
+```solidity
+// BAD — reverts with underflow if timestamp is in the future
+require(block.timestamp - updatedAt < MAX_AGE, "Stale");
+
+// GOOD — guard against future timestamps first
+require(updatedAt <= block.timestamp, "Future timestamp");
+require(block.timestamp - updatedAt < MAX_AGE, "Stale");
+```
+
+### Case 31: Bridged-asset oracle uses the underlying native-asset feed (depeg risk)
+Using the BTC/USD Chainlink feed to price WBTC (a bridged asset) ignores the bridge-specific depeg risk: if the bridge is exploited or halted, WBTC can trade far below BTC. This pattern was found in at least six separate audits. The same applies to any bridged/synthetic asset (renBTC, cbBTC, stETH-based derivatives). Check:
+- Whether WBTC, renBTC, or other bridged assets are priced using the native asset's Chainlink feed (BTC/USD) rather than a WBTC/USD or WBTC/BTC feed
+- Whether the protocol acknowledges the bridge-custody risk in its oracle selection and has documented the decision
+- Whether a bridge exploit could allow users to borrow against worthless bridged tokens at the native asset's price
+- Whether a WBTC/BTC or WBTC/ETH secondary feed is cross-checked against the BTC/USD primary feed as a circuit breaker

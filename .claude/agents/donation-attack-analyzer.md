@@ -112,3 +112,129 @@ ERC4626 defines `maxDeposit`, `maxMint`, `maxWithdraw`, and `maxRedeem` function
 - Whether `maxRedeem` is consistent with `maxWithdraw` (the share equivalent of the withdraw limit)
 - Whether these functions revert instead of returning 0 when the vault is paused (they should return 0, not revert, per ERC4626 spec)
 - Whether integrating protocols (routers, aggregators) rely on these limits to determine transaction amounts and would fail if they're wrong
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 12: Dead shares minted to msg.sender instead of a dead address
+When a protocol mints "dead shares" on first deposit to prevent inflation, minting them to `msg.sender` (or any recoverable address) rather than `address(0)` or a burn address allows the attacker to redeem the dead shares and recover their cost, making the protection economically bypassable. Check:
+- Whether dead shares are minted to `address(0)` or a permanently inaccessible address, not to `msg.sender` or the deployer
+- Whether the attacker who triggers dead-share minting can later redeem those shares via `redeem` or `withdraw`
+- Whether the dead-share amount is large enough relative to potential donation size to make the attack unprofitable even if shares go to a wrong address
+- Whether the protocol distinguishes between dead shares (permanent) and the depositor's own shares in accounting
+```
+// BAD — attacker receives dead shares and can redeem them
+function deposit(uint256 assets) external {
+    if (totalSupply() == 0) {
+        _mint(msg.sender, DEAD_SHARES); // attacker owns these
+    }
+    // ...
+}
+
+// GOOD — dead shares go to unreachable address
+function deposit(uint256 assets) external {
+    if (totalSupply() == 0) {
+        _mint(address(0xdead), DEAD_SHARES); // permanently locked
+    }
+    // ...
+}
+```
+
+### Case 13: MIN_INITIAL_DEPOSIT guard bypassable via withdraw/redeem path
+A protocol may enforce a minimum deposit on the `deposit` entry point to prevent inflation attacks, but fail to enforce the same floor on `withdraw` or `redeem`. An attacker or early depositor can withdraw shares until `totalSupply` falls below the minimum, resetting the vault to an exploitable state. Check:
+- Whether `withdraw` and `redeem` check that the remaining `totalSupply` after the operation stays above the minimum initial deposit threshold
+- Whether a user can withdraw all but 1 share, leaving a dust totalSupply that enables a subsequent inflation attack
+- Whether the minimum-deposit invariant is enforced as an invariant on `totalSupply`, not just at deposit time
+- Whether emergency-exit or admin-controlled withdrawal paths also respect the minimum supply floor
+```
+// BAD — minimum only enforced on entry
+function deposit(uint256 assets) external {
+    require(assets >= MIN_INITIAL_DEPOSIT || totalSupply() > 0, "too small");
+    // ...
+}
+// withdraw has no floor check — attacker can drain totalSupply back to dust
+
+// GOOD — floor enforced on exit too
+function withdraw(uint256 assets) external {
+    // ...
+    require(totalSupply() >= MIN_SHARES_FLOOR, "below minimum supply");
+}
+```
+
+### Case 14: Decimal offset of zero for 18-decimal underlying tokens
+Some vault implementations derive `_decimalsOffset()` from the underlying token's decimals using a formula that returns 0 when the token has exactly 18 decimals. A zero offset provides no inflation protection — the virtual-shares mechanism is completely disabled for the most common token type. Check:
+- Whether `_decimalsOffset()` (or equivalent) returns a non-zero value when the underlying token has 18 decimals
+- Whether the offset formula is `18 - token.decimals()` or similar, which evaluates to 0 for standard ERC20 tokens
+- Whether the protocol was tested with tokens of various decimals but only audited/deployed with 18-decimal tokens
+- Whether a fallback minimum offset (e.g., always at least 6) is enforced regardless of token decimals
+```
+// BAD — returns 0 for standard 18-decimal tokens
+function _decimalsOffset() internal view override returns (uint8) {
+    return 18 - IERC20Metadata(asset()).decimals(); // == 0 for WETH, DAI, etc.
+}
+
+// GOOD — always provides meaningful protection
+function _decimalsOffset() internal view override returns (uint8) {
+    uint8 underlyingDecimals = IERC20Metadata(asset()).decimals();
+    uint8 raw = underlyingDecimals >= 18 ? 0 : 18 - underlyingDecimals;
+    return raw < 6 ? 6 : raw; // minimum offset of 6
+}
+```
+
+### Case 15: Donation-protection bypass via asymmetric transfer path validation
+A protocol may implement donation-attack guards on one asset-entry path (e.g., a strict `allocate` function) but leave a second, more permissive path (e.g., a generic `transferIn` or ERC777 hook) that accepts tokens without updating the protected accounting state. An attacker uses the lenient path to inject tokens that inflate `totalAssets` without going through the guard. Check:
+- Whether every code path that can increase the vault's token balance also updates the same internal accounting variable used by `totalAssets()`
+- Whether ERC777 `tokensReceived` hooks, `safeTransfer` callbacks, or fallback receivers can deposit assets that bypass the primary deposit guard
+- Whether the protocol has a "rescue" or "sweep" function that can be exploited to route tokens around accounting checks
+- Whether both `transfer` and `transferFrom` paths (including permit-based transfers) go through the same validation logic
+```
+// BAD — two paths, only one is guarded
+function strictDeposit(uint256 amount) external {
+    require(amount >= MIN_DEPOSIT, "too small");
+    _internalBalance += amount;
+    token.transferFrom(msg.sender, address(this), amount);
+}
+function permissiveReceive(uint256 amount) external {
+    // no guard — _internalBalance NOT updated, but balanceOf increases
+    token.transferFrom(msg.sender, address(this), amount);
+}
+function totalAssets() public view returns (uint256) {
+    return token.balanceOf(address(this)); // sees permissiveReceive deposits
+}
+```
+
+### Case 16: Inflation attack used as denial-of-service rather than fund theft
+An attacker may inflate the share price not to steal funds but to make the vault permanently unusable by ensuring all subsequent `deposit` calls result in 0 shares minted (due to rounding). This is a griefing attack: the attacker spends tokens to lock out all depositors. Check:
+- Whether the vault reverts (or otherwise rejects) a deposit that would result in 0 shares being minted
+- Whether an attacker can force `convertToShares(largeAmount) == 0` through a sufficiently large donation, making the vault non-functional for any realistic deposit
+- Whether the protocol has an on-chain circuit breaker or maximum-exchange-rate cap that prevents pathological share prices
+- Whether the DoS is reversible (e.g., via admin intervention or a rescue deposit path)
+```
+// Check: does deposit reject zero-share outcomes?
+function deposit(uint256 assets) external returns (uint256 shares) {
+    shares = convertToShares(assets);
+    require(shares > 0, "zero shares"); // GOOD — rejects DoS condition
+    // ...
+}
+// Without this check, a sufficiently large donation makes the vault
+// permanently un-depositable for any economically viable amount.
+```
+
+### Case 17: Unrestricted LP token burn enabling share price inflation
+In AMM vaults or liquidity pools that track share value via `totalSupply()`, allowing any holder to burn their LP tokens without a corresponding asset withdrawal reduces `totalSupply` while leaving `totalAssets` unchanged, permanently inflating the price-per-share. Unlike a donation attack, no external tokens are needed — the attacker uses tokens they already hold. Check:
+- Whether LP token `burn` is callable by anyone without withdrawing the proportional underlying assets
+- Whether burning LP tokens increases the share price for remaining holders (it should not in a well-designed system)
+- Whether the first depositor can mint a large supply, burn most of it to inflate price, then exploit new depositors
+- Whether the `burn` function enforces that assets are returned proportionally before shares are destroyed
+```
+// BAD — burn reduces supply without returning assets
+function burn(uint256 shares) external {
+    _burn(msg.sender, shares); // totalAssets unchanged, price inflated
+}
+
+// GOOD — burn must return proportional assets
+function burn(uint256 shares) external returns (uint256 assets) {
+    assets = convertToAssets(shares);
+    _burn(msg.sender, shares);
+    token.transfer(msg.sender, assets); // assets leave with shares
+}
+```

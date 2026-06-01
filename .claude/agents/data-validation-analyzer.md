@@ -200,3 +200,192 @@ bytes32 hash = keccak256(abi.encode(name, symbol));
 // ALSO GOOD — if using encodePacked, add a separator or use only fixed-length types
 bytes32 hash = keccak256(abi.encodePacked(addr, uint256(amount), uint256(nonce)));
 ```
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 16: Wrong variable used in validation or assignment
+A function validates or assigns one variable but actually reads/writes a different (often similarly named) variable, making the check a no-op or corrupting state. Examples: checking a local parameter instead of the storage slot it was meant to update, passing the wrong account to a burn/mint function, or a constructor storing values in the wrong fields. Check:
+- Whether validation `require` statements reference the same variable that is subsequently written to storage (not a shadowing local or a sibling field)
+- Whether `burn(account, amount)` / `mint(to, amount)` receives the intended address, not a default/zero value
+- Whether constructor argument names shadow or conflict with storage variable names (e.g., `amplification_` vs `amplification`)
+- Whether setter functions that accept multiple parameters assign each argument to the correct storage slot
+```
+// BAD — checks uninitialised storage, not the incoming argument
+constructor(uint256 amplification_) {
+    require(amplification > 0); // reads storage (0), not amplification_
+    amplification = amplification_;
+}
+
+// GOOD — validates the incoming argument
+constructor(uint256 amplification_) {
+    require(amplification_ > 0);
+    amplification = amplification_;
+}
+```
+
+### Case 17: Parallel array length mismatch
+Functions that accept two (or more) arrays that must have equal length do not verify parity before iterating, causing out-of-bounds reverts or silently ignoring trailing elements. This pattern recurs in batch settlement, proof verification, and reward distribution. Check:
+- Whether functions accepting parallel arrays (e.g., `recipients[]` / `amounts[]`, `commands[]` / `proofs[]`, `makerOrders[]` / `amounts[]`) assert `array1.length == array2.length`
+- Whether off-by-one between the arrays causes the last element to be skipped or an extra iteration to revert
+- Whether the mismatch check is missing only in one overloaded variant while present in others
+- Whether storage-proof helper functions validate that the number of returned proofs equals the number of requested storage keys
+```
+// BAD — reverts or silently skips if lengths differ
+function batchTransfer(address[] calldata recipients, uint256[] calldata amounts) external {
+    for (uint i = 0; i < recipients.length; i++) {
+        token.transfer(recipients[i], amounts[i]); // panic if amounts is shorter
+    }
+}
+
+// GOOD — explicit parity check
+function batchTransfer(address[] calldata recipients, uint256[] calldata amounts) external {
+    require(recipients.length == amounts.length, "Length mismatch");
+    for (uint i = 0; i < recipients.length; i++) {
+        token.transfer(recipients[i], amounts[i]);
+    }
+}
+```
+
+### Case 18: Missing bounds check before array indexing in batch/decode operations
+Low-level decode functions and batch processors index into byte arrays or calldata without first verifying the offset or element count is within the actual data boundary, enabling out-of-bounds reads/writes or exploitation of unrelated memory. Check:
+- Whether `toBytes32(data, offset)` / `readMem(addr)` / `slice(data, offset, length)` validate that `offset + size <= data.length` before accessing memory
+- Whether ERC-7579 / batch execution decoders verify that each pointer location is within the encoded buffer before dereferencing
+- Whether `decodeBatch()` checks that declared element offsets do not exceed the total calldata length
+- Whether `getStorageValues` or similar proof-aggregation functions guard against fewer returned entries than requested keys
+- Whether Vyper-compiled contracts using `slice()` are audited for overflow in the bounds expression itself
+```
+// BAD — out-of-bounds read if offset >= data.length
+function toBytes32(bytes memory data, uint256 offset) internal pure returns (bytes32 result) {
+    assembly { result := mload(add(add(data, 32), offset)) }
+}
+
+// GOOD — validate before access
+function toBytes32(bytes memory data, uint256 offset) internal pure returns (bytes32 result) {
+    require(offset + 32 <= data.length, "Out of bounds");
+    assembly { result := mload(add(add(data, 32), offset)) }
+}
+```
+
+### Case 19: Sign-crossing unsafe cast (negative int to uint, or large uint to int)
+Casting a signed integer that may be negative to an unsigned integer (or vice versa) without a sign/range check silently produces an enormous or incorrect value. This is distinct from Case 14's focus on width-narrowing: here the type width stays the same but the signedness changes. Check:
+- Whether `uint256(signedValue)` is used where `signedValue` can legitimately be negative — a negative `int256` wraps to `~2^256`, not zero
+- Whether `int256(unsignedValue)` is used where `unsignedValue` can exceed `type(int256).max` — values > `2^255 - 1` become negative
+- Whether `uint(int8(x))` conversions in decimal-handling code treat decimals > 127 as large positive values instead of negative
+- Whether the contract uses `SafeCast.toUint256` / `SafeCast.toInt256` for all sign-crossing conversions
+- Whether price-difference or PnL calculations subtract values as `uint` and then cast the result to `int` (masking underflows)
+```
+// BAD — negative price delta silently becomes a huge uint
+uint256 priceDelta = uint256(currentPrice - lastPrice); // if currentPrice < lastPrice, underflows
+
+// BAD — uint8 decimals value 200 becomes int8(-56)
+int8 d = int8(decimals); // if decimals > 127, sign flips
+
+// GOOD — explicit sign check before conversion
+require(currentPrice >= lastPrice, "Price decreased");
+uint256 priceDelta = uint256(currentPrice - lastPrice);
+```
+
+### Case 20: Missing distinctness validation for paired addresses or IDs
+Functions that accept two addresses (or IDs) that must be different do not verify they are not equal, enabling bridge exploits, self-referential pools, collateral reuse, or key ownership confusion. This is distinct from Case 1 (zero-address) — here neither value is zero, but they must differ. Check:
+- Whether bridge `registerToken(localToken, remoteToken)` asserts `localToken != remoteToken`
+- Whether cross-chain initializers assert `sourceChainId != targetChainId`
+- Whether `transferFrom(from, to, amount)` with admin override asserts `from != to` to prevent re-minting burned tokens
+- Whether lending markets prevent using the same asset as both collateral and debt in a single position
+- Whether two-party operations (buyer/seller, lender/borrower) validate the parties are distinct addresses
+```
+// BAD — same address on both sides silently accepted
+function registerToken(address localToken, address remoteToken) external onlyOwner {
+    tokenMapping[localToken] = remoteToken; // passes if both are the same token
+}
+
+// GOOD
+function registerToken(address localToken, address remoteToken) external onlyOwner {
+    require(localToken != remoteToken, "Tokens must differ");
+    tokenMapping[localToken] = remoteToken;
+}
+```
+
+### Case 21: Missing zero / nonsensical duration and interval validation
+Time-based parameters (epoch duration, vesting cliff, lock period, release interval, auction window) are not validated against a minimum value, allowing zero or pathologically small values that freeze funds, skip vesting entirely, or create perpetual auctions. Check:
+- Whether epoch/period duration setters enforce `duration > 0` (and optionally a sensible maximum)
+- Whether vesting schedule constructors validate `cliff > 0`, `startTimestamp < endTimestamp`, and `endTimestamp` is not in the past
+- Whether `_releaseIntervalSecs` is validated to be non-zero when `_linearVestAmount > 0` (otherwise division-by-zero or infinite loop)
+- Whether auction `closingTime` must be strictly greater than `openingTime` and within a reasonable future window
+- Whether staking lock period has both a minimum and maximum to prevent tokens being locked indefinitely
+```
+// BAD — epoch duration of 0 freezes rewards forever
+function createPromotion(address token, uint256 tokensPerEpoch, uint256 epochDuration, ...) external {
+    // epochDuration not validated — if 0, claimable epochs = 0 always
+    promotions[id] = Promotion({epochDuration: epochDuration, ...});
+}
+
+// GOOD
+function createPromotion(..., uint256 epochDuration, ...) external {
+    require(epochDuration > 0, "Epoch duration cannot be zero");
+    require(epochDuration <= MAX_EPOCH_DURATION, "Epoch duration too large");
+    ...
+}
+```
+
+### Case 22: Operator precedence / incorrect expression in encoding or bitwise logic
+Bitwise and arithmetic operations have counter-intuitive precedence in Solidity, causing an expression to be evaluated in a different order than intended — typically shifting or masking the wrong bits, or encoding an incorrect value without any compile-time error. Check:
+- Whether bitwise OR/AND/XOR expressions around addition/multiplication are parenthesised correctly (e.g., `a | b + c` parses as `a | (b + c)`, not `(a | b) + c`)
+- Whether packed-field encoding functions combine two fields with the correct shift before OR-ing (e.g., `(a << 128) | b` vs `a << 128 | b` which is the same but `a << (128 | b)` is not)
+- Whether `encodeFeesAreBorrowedAndCreditInterests`-style functions are tested with known inputs to verify decode(encode(x)) == x
+- Whether multi-field bitmask constants are computed with parentheses to avoid precedence surprises
+- Whether the off-by-one in base-10 exponent calculations (e.g., subtracting wrong number from exponent) causes numerators or denominators to be 10x too large or small
+```
+// BAD — precedence: reads as fieldA | (fieldB << 128), encoding fieldB in high bits, fieldA in low bits unshifted
+uint256 packed = fieldA | fieldB << 128;
+
+// BAD — base-10 exponent off-by-one: result is 10× wrong
+uint256 numerator = amount * 10 ** (decimals - 1); // should be decimals, not decimals-1
+
+// GOOD — explicit parentheses
+uint256 packed = (fieldA & LOWER_MASK) | (fieldB << 128);
+```
+
+### Case 23: Missing minimum-to-maximum relationship check on paired bounds parameters
+When a contract stores both a minimum and a maximum for the same dimension (delay, fee, ratio, collateral), it often validates each in isolation but never asserts `minimum <= maximum`. This allows configurations where the minimum exceeds the maximum, permanently breaking any code that enforces both bounds. Check:
+- Whether governance timelock constructors and setters assert `minDelay <= maxDelay`
+- Whether fee range setters assert `minFee <= maxFee`
+- Whether collateral ratio bounds assert `minCollateralRatio <= maxCollateralRatio`
+- Whether auction bid range setters assert `minBid <= maxBid`
+- Whether any function that updates only one of a min/max pair re-validates the relationship after the update
+```
+// BAD — minimumDelay can silently exceed maximumDelay
+function initialize(uint256 minimumDelay, uint256 maximumDelay) external {
+    require(minimumDelay > 0);
+    require(maximumDelay > 0);
+    // no check that minimumDelay <= maximumDelay
+    _minimumDelay = minimumDelay;
+    _maximumDelay = maximumDelay;
+}
+
+// GOOD
+function initialize(uint256 minimumDelay, uint256 maximumDelay) external {
+    require(minimumDelay > 0 && minimumDelay <= maximumDelay, "Invalid delay range");
+    _minimumDelay = minimumDelay;
+    _maximumDelay = maximumDelay;
+}
+```
+
+<!-- June 2026 Solodit enrichment (2nd pass: unrouted set) -->
+### Case 24: Missing self-reference check enabling self-dealing (referrer/approver == caller)
+Functions that grant an economic benefit to a *second party* fail to assert that party differs from the caller, letting a user name themselves and capture both sides. Recurring instances: setting yourself as your own referrer to farm referral fees/rebates; a multi-approver or proposer/approver scheme where the proposer is also an eligible approver (self-approval bypasses the second signature); voting/attesting for your own proposal; designating yourself as your own guardian/beneficiary. Distinct from a plain zero-address check — the value is non-zero and valid, just self-referential. Check:
+- Whether referral/rebate logic enforces `referrer != msg.sender` (and that referrer isn't an alt address the caller controls in the same tx)
+- Whether proposer/approver, requester/executor, or maker/taker roles are asserted to be different addresses
+- Whether "N distinct approvals" actually checks distinctness, not just a count that the same caller can increment
+- Whether self-attestation / self-vote / self-attest-to-own-claim paths are blocked where independence is assumed
+```
+// BAD — user farms referral rewards by referring themselves
+function register(address referrer) external {
+    referrerOf[msg.sender] = referrer; // no check referrer != msg.sender
+}
+
+// GOOD
+function register(address referrer) external {
+    require(referrer != msg.sender, "self-referral");
+    referrerOf[msg.sender] = referrer;
+}
+```

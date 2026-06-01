@@ -128,3 +128,91 @@ Using `block.timestamp` as a mapping key or nonce allows two calls within the sa
 - Whether `block.timestamp` or `block.prevrandao` alone seeds any random number used for winner selection, NFT properties, or loot drops
 - Whether a TWAP or oracle freshness check uses only `block.timestamp` without comparing against a minimum observation window (e.g., "observation must be at least 15s old before it is returned as canonical")
 - Whether Chainlink VRF or a commit-reveal scheme is used instead for on-chain randomness
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 15: `lastRewardTime` overwritten before incentive start, bypassing the start gate
+When an accrual function checks `if (block.timestamp < incentive.startTime) return` but then unconditionally writes `lastRewardTime = block.timestamp`, a call made before the incentive starts resets `lastRewardTime` to the pre-start timestamp. On the next call (after start), the elapsed interval is computed from the pre-start moment, silently crediting time that predates the incentive. The original `startTime` may also be overwritten, permanently disabling the guard. Check:
+- Whether `_accrueRewards`, `updateReward`, or equivalent functions write `lastRewardTime = block.timestamp` on the early-exit path (before `startTime`) rather than only on the main accrual path
+- Whether `startTime` itself is stored alongside `lastRewardTime` in the same struct field that gets overwritten
+- Whether incentives that have not yet started can be "primed" by any caller to shift the effective start backward
+- Whether a test exists that calls accrual before `startTime` and verifies `lastRewardTime` remains unmodified
+```solidity
+// VULNERABLE — updates lastRewardTime even when not yet started
+function _accrueRewards(Incentive storage inc) internal {
+    if (block.timestamp < inc.startTime) {
+        inc.lastRewardTime = block.timestamp; // BUG: primes future over-accrual
+        return;
+    }
+    ...
+}
+// SAFER — only update inside the active window
+function _accrueRewards(Incentive storage inc) internal {
+    if (block.timestamp < inc.startTime) return; // no state write
+    ...
+    inc.lastRewardTime = block.timestamp;
+}
+```
+
+### Case 16: Per-user cooldown / claim-interval tracker not initialized on first interaction
+A per-user `claimedAt`, `lastClaim`, or `lastActionTimestamp` field defaults to 0 when a user's record is first created. The cooldown guard computes `block.timestamp - claimedAt >= cooldown`, which evaluates as `block.timestamp - 0 >= cooldown` and passes immediately. This lets the first claimer bypass the intended waiting period and claim ahead of schedule. Check:
+- Whether `claimedAt`, `lastClaim`, or equivalent per-user timestamps are initialized to `block.timestamp` (or `type(uint256).max`) when the user record is created, rather than left as 0
+- Whether `addReserve`, `deposit`, `stake`, or any function that creates a user record also sets the cooldown timestamp
+- Whether the first call to `claimRewards` / `withdraw` / `harvest` for a brand-new user passes the cooldown check trivially because the field is unset
+- Whether a global `notifyRewardAmount`-style initialization separately sets `lastUpdateTime` for all existing users vs. only future entrants
+```solidity
+// VULNERABLE — claimedAt defaults to 0, cooldown bypassed on first claim
+mapping(address => uint256) public claimedAt;
+require(block.timestamp - claimedAt[msg.sender] >= CLAIM_TIMEOUT);
+
+// SAFER — initialize on first deposit
+claimedAt[msg.sender] = block.timestamp;
+```
+
+### Case 17: EIP-6372 `CLOCK_MODE` / `clock()` returns wrong value on L2 governance contracts
+EIP-6372 requires contracts to expose a `clock()` function and `CLOCK_MODE()` string declaring whether they count in timestamps or block numbers. On Arbitrum, Optimism, and zkSync, `block.number` returns the L1 block number (synced infrequently), making any governance contract that implements `clock()` as `return block.number` report a clock that advances far more slowly than expected. Voting windows, quorum snapshots, and timelock delays all break. Check:
+- Whether `CLOCK_MODE()` returns `"mode=blocknumber"` on a contract deployed or usable on an L2 where `block.number` is the L1 block number
+- Whether `clock()` is implemented as `block.number` rather than `block.timestamp` for chains where block numbers are not a reliable time proxy
+- Whether dependent contracts (EscrowManager, vault, etc.) that consume `clock()` from a token or governance contract implement their own matching `CLOCK()` / `CLOCK_MODE()` pair
+- Whether voting delay and voting period expressed in blocks produce sensible durations on the target chain given actual L2 block times
+```solidity
+// VULNERABLE on L2 — block.number is L1 block number on Arbitrum
+function clock() public view returns (uint48) {
+    return uint48(block.number);
+}
+// SAFER for L2 deployments
+function clock() public view returns (uint48) {
+    return uint48(block.timestamp);
+}
+```
+
+### Case 18: Cumulative per-unit state (funding rate, reward index) not refreshed between sequential same-block operations
+When two or more operations (liquidations, deposits, borrows) that modify the same pool state execute in the same block, the second operation reads a cumulative `fundingFeePerUnit`, `rewardPerToken`, or `interestIndex` that was already snapshotted at `block.timestamp` by the first call. Because no time has elapsed, the accumulator is not updated, causing the second operation to use a stale rate that does not reflect the state change from the first operation. Check:
+- Whether `liquidate`, `borrow`, `repay`, or batch functions call an update function that is a no-op when `block.timestamp == lastUpdateTime`, yet those functions mutate position sizes that affect the next rate computation
+- Whether `updatePositions` / `settleFunding` returns zero (no-op) when called with the same `_nextFundingTime` computed twice in the same block, silently skipping an in-block accrual
+- Whether multiple accounts can be liquidated in the same transaction and each liquidation correctly uses the position-size-adjusted rate rather than the rate from the first liquidation
+- Whether the rate accumulator is updated per-position (not per-block) to handle intra-block sequencing correctly
+
+### Case 19: Accrual / rebase function assumes a fixed elapsed interval instead of computing `block.timestamp - lastTime`
+A `rebase()`, `accrue()`, or `updateVirtualPrice()` function divides a total rate by a hardcoded period (e.g., `RATE / SECONDS_PER_DAY`) without multiplying by the actual elapsed seconds. If the function is called early, the same full-period increment is applied; if called late, the surplus is lost. Separately, calling the function more than once per block can allow the rate to be applied multiple times or bypass the guard entirely. Check:
+- Whether `rebase`, `_updateVirtualPrice`, `mintInflation`, or equivalent functions compute the increment as `rate * (block.timestamp - lastTime) / PERIOD` rather than just `rate / PERIOD`
+- Whether the function contains a guard like `if (block.timestamp < lastTime + PERIOD) return` that is bypassable when `lastTime` is not updated on no-op calls
+- Whether calling the function many times in rapid succession (e.g., after it hasn't been called for several periods) allows replaying the same period multiple times
+- Whether `lastTime` is updated even when the function exits early (no state change), preventing the gap from being applied on the next call
+```solidity
+// VULNERABLE — applies full day's rate regardless of actual elapsed time
+virtualPrice += virtualPrice * dailyRate / 1e18;
+lastUpdateTime = block.timestamp;
+
+// SAFER — scale by actual elapsed seconds
+uint256 elapsed = block.timestamp - lastUpdateTime;
+virtualPrice += virtualPrice * dailyRate * elapsed / (1 days * 1e18);
+lastUpdateTime = block.timestamp;
+```
+
+### Case 20: Interest or reward accrual silently capped at a maximum duration
+A utility function (e.g., `calcShare`, `getInterestOwed`) caps `timeElapsed` to a maximum window (commonly 1 year or 1 epoch) before computing interest or rewards. Positions older than the cap stop accruing debt or yield, effectively forgiving long-overdue borrowers or depriving long-term stakers of earned rewards. Check:
+- Whether `getInterestOwed`, `calcShare`, `_pendingRewards`, or equivalent helpers clamp `timeElapsed = min(timeElapsed, MAX_DURATION)` before the rate multiplication
+- Whether the cap is intentional (documented) and whether it is applied symmetrically to both debt (borrower benefit) and yield (lender detriment)
+- Whether the cap creates an incentive for borrowers to leave positions open beyond the cap period to avoid further interest accumulation
+- Whether positions that have exceeded the cap are handled by a separate penalty or liquidation path that prevents the silent write-off

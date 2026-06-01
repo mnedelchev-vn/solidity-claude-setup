@@ -177,3 +177,184 @@ When migrating vesting schedules from one contract to another (V1 → V2). Check
 - Whether the migration formula ignores critical variables (e.g., `legacyTokensSentOnL1` leading to excess distribution)
 - Whether the migration can be replayed (claiming from both old and new contracts)
 - Whether timestamp-based calculations are adjusted for the migration gap (time between V1 end and V2 start)
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 14: Vesting overwrite resets existing schedule on re-vest
+Calling `vest()` or `vestFor()` a second time for the same beneficiary overwrites the existing schedule (start time, amount, or revocability flag) rather than appending or rejecting. Check:
+- Whether a second call to `vest()`/`vestFor()` silently overwrites an active vesting for the same address
+- Whether `unlockBegin` or `startedAt` is reset to `block.timestamp`, causing previously-locked tokens to re-lock under the new timeline
+- Whether `benRevocable` or similar per-beneficiary flags can be overwritten by any caller, stripping non-revocability guarantees
+- Whether the contract reverts or merges correctly when a beneficiary already has an active schedule
+- Whether a previous unclaimed-but-vested balance is preserved or becomes inaccessible after overwrite
+```
+// BAD — second vest() overwrites existing schedule
+function vest(address beneficiary, uint256 amount, uint256 duration) external onlyOwner {
+    vests[beneficiary] = VestInfo(block.timestamp, amount, duration, 0); // wipes prior entry
+}
+
+// GOOD — reject or merge
+function vest(address beneficiary, uint256 amount, uint256 duration) external onlyOwner {
+    require(vests[beneficiary].amount == 0, "already vesting");
+    vests[beneficiary] = VestInfo(block.timestamp, amount, duration, 0);
+}
+```
+
+### Case 15: Vesting schedule index collision / missing counter increment
+When vestings are stored in an array or mapping keyed by an incrementing counter, failing to increment the counter causes multiple schedules to share the same slot. Check:
+- Whether the index/counter variable is incremented AFTER it is used to store a new vesting entry (not before)
+- Whether the same beneficiary address can be added twice to the recipients array, causing duplicate entries and double-counting of total obligations
+- Whether a new vesting for an existing beneficiary overwrites the previous record without accounting for the unreleased balance
+- Whether `schedulesTotalAmount` or equivalent aggregate trackers are correctly adjusted on both creation and deletion
+```
+// BAD — _vestingCount not incremented; every new vesting lands at index 0
+function addUserVesting(address user, uint256 amount) external {
+    vestings[_vestingCount] = Vesting(user, amount); // _vestingCount always 0
+    // missing: _vestingCount++;
+}
+```
+
+### Case 16: Frontrunnable permissionless `vestFor` griefing
+Any account can call `vestFor(victim, tinyAmount)` before a legitimate call, causing the real transaction to revert because the victim already has an active vesting. Check:
+- Whether `vestFor` / `vestPublic` / `lock` functions have no caller restriction and no guard against a pre-existing schedule
+- Whether a griefing deposit of the minimum unit (1 wei / 1 token) is enough to block the target address from ever receiving a proper grant
+- Whether the function used to detect an existing vesting (e.g., `vestingAmount > 0`) can be trivially triggered by a dust deposit
+- Whether unbounded timelock loops let a non-beneficiary exhaust all timelock slots for a victim, permanently blocking legitimate vesting
+```
+// BAD — no access control, no duplicate guard
+function vestFor(address user, uint256 amount) external {
+    require(vestAmount[user] == 0); // attacker frontruns with amount=1
+    vestAmount[user] = amount;
+}
+```
+
+### Case 17: Vesting bypass via position transfer to a fresh address
+When lockup/vesting positions are transferred to a new address, the recipient's `startedAt` / `vestingStart` is not updated, causing the tokens to unlock immediately (or re-start the full period from the wrong baseline). Check:
+- Whether `transferLock` / `transferVesting` / `_withdraw`-and-redeposit paths reset `startedAt` to `block.timestamp` for the recipient
+- Whether transferring an ERC-20 share (e.g., pool LP token with embedded vesting) to another address resets or nullifies the vesting check
+- Whether `SablierBob`-style vault-share transfers allow an attacker to exit early by entering with a tiny amount after transferring the share
+- Whether the vesting state is stored on the token/NFT versus a separate mapping (mapping-based vesting is not transferred automatically)
+```
+// BAD — startedAt not updated; recipient gets immediate unlock
+function transferLock(address to, uint256 lockId) external {
+    locks[to] = locks[msg.sender]; // startedAt still points to original creation time
+    delete locks[msg.sender];
+}
+
+// GOOD — reset timeline for recipient
+function transferLock(address to, uint256 lockId) external {
+    Lock memory l = locks[msg.sender];
+    uint256 elapsed = block.timestamp - l.startedAt;
+    l.startedAt = block.timestamp;
+    l.duration = l.duration > elapsed ? l.duration - elapsed : 0;
+    locks[to] = l;
+    delete locks[msg.sender];
+}
+```
+
+### Case 18: Sablier-style stream update without flushing accrued balance
+Updating stream parameters (rate, endTime, recipient) without first withdrawing the accrued streamed balance causes those tokens to be lost or misattributed. Check:
+- Whether `updateStream()` / stream-replace operations settle (withdraw) pending accrued amounts before overwriting the stream record
+- Whether top-up operations that increase `topUpAmount` inadvertently count already-elapsed time as newly deposited, marking vested-but-unclaimed funds as freshly streamed
+- Whether `CouncilMember`-style contracts that redirect a stream to a new recipient zero out the prior accrued balance for the old recipient
+- Whether stream cancellation followed by recreation on a new contract address loses the accrued-but-unclaimed window between cancel and recreate
+```
+// BAD — overwrite loses accrued balance
+function updateStream(uint256 streamId, uint256 newRate) external {
+    streams[streamId].ratePerSecond = newRate; // accrued amount since last snapshot not settled
+    streams[streamId].lastUpdated = block.timestamp;
+}
+
+// GOOD — settle first
+function updateStream(uint256 streamId, uint256 newRate) external {
+    _settleStream(streamId); // credits recipient with accrued amount
+    streams[streamId].ratePerSecond = newRate;
+    streams[streamId].lastUpdated = block.timestamp;
+}
+```
+
+### Case 19: Streaming debt overflow bricks the stream
+Multiplying `ratePerSecond × elapsedSeconds` without overflow protection permanently breaks the stream when the product exceeds `uint256` bounds (or a narrower uint type). Check:
+- Whether `_ongoingDebtOf()` or equivalent uses `unchecked` arithmetic for the `ratePerSecond * elapsed` multiplication
+- Whether unusually large rates or very long streams (years of accumulated debt) can cause the calculation to overflow and revert on every subsequent call
+- Whether overflow in the debt calculation prevents the sender from cancelling the stream (cancellation reads the debt too)
+- Whether the contract validates `ratePerSecond` at creation time so that `rate * maxDuration` cannot overflow
+```
+// BAD — unchecked multiplication overflows for large rate or elapsed time
+function _ongoingDebtOf(uint256 streamId) internal view returns (uint256) {
+    unchecked {
+        return streams[streamId].ratePerSecond * (block.timestamp - streams[streamId].lastSnapshot);
+    }
+}
+```
+
+### Case 20: Early-exit penalty applied to total unclaimed amount instead of unvested remainder
+`claimVestEarlyWithPenalty()` computes the penalty on the entire unclaimed balance, not just the as-yet-unearned portion, causing users to overpay when they have already earned a significant fraction. Check:
+- Whether the penalty base is `totalUnclaimed` vs `unvestedRemainder` (should be only the not-yet-vested portion)
+- Whether users who call regular `claimVest` first (extracting vested tokens) before calling the early-exit path are charged a lower total penalty than those who call early-exit directly
+- Whether the vested-but-unclaimed portion is subtracted from the penalty base before the penalty rate is applied
+- Whether the penalty formula is documented and matches the actual calculation in code
+```
+// BAD — penalty on full unclaimed balance
+function claimEarlyWithPenalty(address user) external {
+    uint256 unclaimed = totalAllocated[user] - claimed[user];
+    uint256 penalty = unclaimed * penaltyRate / 1e18; // includes already-earned tokens
+    _pay(user, unclaimed - penalty);
+}
+
+// GOOD — penalty only on unvested portion
+function claimEarlyWithPenalty(address user) external {
+    uint256 vested = calculateVested(user);
+    uint256 unvested = totalAllocated[user] - vested;
+    uint256 penalty = unvested * penaltyRate / 1e18;
+    _pay(user, (vested - claimed[user]) + unvested - penalty);
+}
+```
+
+### Case 21: Global TGE / start-date mutability retroactively shifts all vesting schedules
+A setter for the global TGE start date (or `vestingStartTime`) affects all existing schedules simultaneously, silently extending or compressing every beneficiary's vesting timeline. Check:
+- Whether `setTgeDate()` / `setVestingStart()` can be called multiple times without restriction
+- Whether each vesting schedule caches its own effective start time at creation, or reads a shared mutable global
+- Whether moving the start date forward allows currently-locked tokens to become immediately claimable (cliff bypassed)
+- Whether moving the start date backward extends the vesting period beyond what was promised to beneficiaries
+- Whether there is a "no change after first use" guard (e.g., `require(!tgeSet)`)
+```
+// BAD — global date reset shifts all schedules
+function setTgeDate(uint256 newDate) external onlyOwner {
+    tgeStartDate = newDate; // affects every existing vesting simultaneously
+}
+
+// GOOD — immutable after first set
+function setTgeDate(uint256 newDate) external onlyOwner {
+    require(tgeStartDate == 0, "TGE date already set");
+    tgeStartDate = newDate;
+}
+```
+
+### Case 22: Self-transfer exploit inflates vesting points or shares
+`transferPoints()` / `transferAllocation()` functions that do not guard against `from == to` allow a user to repeatedly self-transfer, inflating their balance or accruing unbounded protocol points. Check:
+- Whether transfer functions include `require(from != to)` or equivalent
+- Whether the self-transfer path is reachable through an indirect route (e.g., two-step marketplace listing and immediate repurchase by the same address)
+- Whether points/shares are additively merged on receipt without checking for the self-transfer case, doubling the balance each call
+- Whether event emission is the only observable effect, masking an invisible balance inflation
+```
+// BAD — self-transfer doubles points
+function transferPoints(address to, uint256 amount) external {
+    points[msg.sender] -= amount;
+    points[to] += amount; // if to == msg.sender, net effect is zero BUT if += precedes -=, overflow
+}
+
+// GOOD
+function transferPoints(address to, uint256 amount) external {
+    require(to != msg.sender, "self-transfer not allowed");
+    points[msg.sender] -= amount;
+    points[to] += amount;
+}
+```
+
+### Case 23: Streaming enforcer allowance drained without actual token transfer
+`ERC20StreamingEnforcer` (and similar delegation/caveat enforcers) used with `EXECTYPE_TRY` allow an attacker to repeatedly trigger failing transfers, consuming the streaming allowance budget without moving any tokens. Check:
+- Whether streaming enforcers decrement the allowance counter before (or without verifying) that the underlying transfer succeeded
+- Whether `EXECTYPE_TRY` silences transfer reverts while still consuming quota
+- Whether there is a post-transfer balance check or return-value verification that gates the allowance decrement
+- Whether the enforcer can be called by any address or only the authorized delegatee

@@ -164,3 +164,119 @@ Admin functions that can directly steal or freeze user funds represent a central
 - Whether admin withdrawal functions can take user-deposited funds (not just protocol-owned funds)
 - Whether the owner can change token addresses or oracle addresses to malicious contracts mid-operation
 - Whether there are timelock or multi-sig requirements on high-impact admin operations
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 15: Broken modifier implementation (no-op restriction)
+A modifier exists but its body is logically broken — missing a `require`/`revert`, using the wrong logical operator, or comparing incorrect identifiers — making it silently pass for all callers. Check:
+- Whether custom `onlyX` modifiers contain an explicit `require` or `revert` statement (not just a naked expression)
+- Whether modifiers using `||` instead of `&&` inadvertently allow all callers (e.g., `if (a || b) revert` vs the intended `if (!a && !b) revert`)
+- Whether ID or address comparisons inside modifiers reference the correct storage variable (not a similarly-named but unrelated field)
+- Whether modifier changes introduced in upgrades or refactors are tested end-to-end, not just unit-tested on the modifier itself
+```solidity
+// BAD — missing revert; modifier is a no-op
+modifier onlyMinter() {
+    minterAddress == msg.sender; // no require, silently passes
+    _;
+}
+
+// GOOD
+modifier onlyMinter() {
+    require(msg.sender == minterAddress, "not minter");
+    _;
+}
+```
+
+### Case 16: `tx.origin` used for access control
+Using `tx.origin` instead of `msg.sender` for authorization allows any intermediary contract to inherit the EOA's permissions, enabling phishing attacks where a malicious contract tricks the original signer. Check:
+- Whether any modifier or `require` uses `tx.origin` for role or ownership checks
+- Whether `tx.origin == owner` patterns exist anywhere in the codebase
+- Whether meta-transaction or relayer flows have inadvertently introduced `tx.origin` as an optimization
+```solidity
+// BAD — malicious contract can spoof authorization
+require(tx.origin == owner, "not owner");
+
+// GOOD
+require(msg.sender == owner, "not owner");
+```
+
+### Case 17: Cross-user operations without caller ownership validation
+Functions that accept an arbitrary `from`, `user`, or `tokenId` parameter and act on behalf of that address without verifying that `msg.sender` is the owner or an approved delegate. This pattern recurs across withdraw, liquidity removal, order update, and collateral operations. Check:
+- Whether functions that accept a `from`/`user` address parameter verify `msg.sender == from` or that `msg.sender` is an approved operator for that address
+- Whether NFT-gated functions (`tokenId` param) check `ownerOf(tokenId) == msg.sender` or `isApprovedOrOwner`
+- Whether "on-behalf" operations (flash repay, collateral withdrawal, reward claim) include an explicit authorization check before modifying the victim's state
+- Whether allowance/approval mechanics are used where the contract pulls tokens from `from` without caller validation
+```solidity
+// BAD — anyone can remove liquidity for any user
+function removeLiquidity(address user, uint256 amount) external {
+    _burn(user, amount);
+    token.transfer(msg.sender, amount);
+}
+
+// GOOD
+function removeLiquidity(uint256 amount) external {
+    _burn(msg.sender, amount);
+    token.transfer(msg.sender, amount);
+}
+```
+
+### Case 18: Unprotected `_authorizeUpgrade` / `diamondCut`
+UUPS upgradeable contracts that omit `onlyOwner` (or equivalent) on `_authorizeUpgrade`, and diamond contracts where `diamondCut` is callable by anyone, allow complete contract replacement. Check:
+- Whether `_authorizeUpgrade` in UUPS contracts is overridden with an access control check; the default empty override is callable by anyone
+- Whether `diamondCutFacet.diamondCut` is restricted to the contract owner or admin role
+- Whether the implementation contract behind a proxy has its own `_authorizeUpgrade` that a direct attacker could call to replace logic
+- Whether upgrade authorization is tested with a non-owner caller in the test suite
+```solidity
+// BAD — anyone can upgrade
+function _authorizeUpgrade(address) internal override {}
+
+// GOOD
+function _authorizeUpgrade(address) internal override onlyOwner {}
+```
+
+### Case 19: Permissionless token burn callable by arbitrary callers
+`burn()` or `burnFrom()` functions on token contracts that accept an arbitrary `from` address and execute without checking that `msg.sender` is the token holder or an approved spender. Check:
+- Whether `burn(address from, uint256 amount)` verifies `msg.sender == from` or that allowance has been granted by `from` to `msg.sender`
+- Whether `burnFrom` correctly calls `_spendAllowance` before `_burn`
+- Whether governance or protocol `burn` wrappers re-expose the underlying burn without the standard ERC-20 allowance check
+- Whether zero-address tricks can be used to bypass the `by` / `spender` check (e.g., passing `address(0)` as an approved address)
+
+### Case 20: Signed parameters claimable by any caller (missing recipient binding)
+Off-chain signatures (EIP-712 or raw) that authorize an action for a specific user are redeemable by any `msg.sender` because the contract does not verify that the caller is the intended beneficiary named in the signed data. Check:
+- Whether claim/execute functions that verify a signature also assert `msg.sender == params.recipient` (or equivalent beneficiary field)
+- Whether a valid signature created for user A can be submitted in a separate transaction by user B to redirect the benefit
+- Whether `nonce` or `deadline` fields in signed structs prevent the same signature being replayed across different callers
+- Whether the signer's intent (who should receive the tokens/benefit) is explicitly bound to the transaction sender
+```solidity
+// BAD — any caller can use Alice's signed ClaimParams
+function claim(ClaimParams calldata p, bytes calldata sig) external {
+    _verifySig(p, sig); // only checks signer, not msg.sender
+    token.transfer(msg.sender, p.amount);
+}
+
+// GOOD
+function claim(ClaimParams calldata p, bytes calldata sig) external {
+    require(msg.sender == p.recipient, "wrong caller");
+    _verifySig(p, sig);
+    token.transfer(msg.sender, p.amount);
+}
+```
+
+### Case 21: Role removal logic accidentally grants an unrelated role
+When a role is removed from a user by swapping it with the last element in an array and popping, the user receives whatever role happened to be last — an entirely unintended role grant. Check:
+- Whether `removeRole` / `revokeRole` implementations that use swap-and-pop correctly delete the role rather than overwriting the user's role with a different entry
+- Whether the mapping tracking which roles a user holds is updated in sync with the array
+- Whether events emitted on removal accurately reflect what was actually changed
+- Whether tests assert the user has zero roles after removal, not just that the removed role is gone
+
+### Case 22: Whitelist/allowlist enforced on entry but not on complementary exit path
+A protocol enforces a whitelist on deposits/stakes but omits the same check on the corresponding withdrawal/unstake path, allowing non-whitelisted addresses to interact via the exit function. Check:
+- Whether every function that checks a whitelist on entry has a matching check (or explicit intentional absence) on the symmetric exit path
+- Whether `withdraw`, `redeem`, or `claim` functions enforce the same KYC/membership requirements as the corresponding `deposit`/`stake` functions
+- Whether the whitelist check is applied to `msg.sender` consistently (not to a user parameter that differs from the actual caller)
+
+### Case 23: Internal accounting functions callable permissionlessly by anyone
+State-synchronization functions (snapshots, checkpoints, reward updates, debt reporting) intended to be called only by a trusted keeper or internal contract are left unrestricted, allowing attackers to manipulate accounting to their advantage. Check:
+- Whether functions named `checkpoint_*`, `updateDebtReporting`, `updateSystemSnapshots`, `RM_UpdateReward`, `afterLockUpdate`, `epochEmission`, or similar are protected by a role or `onlyOwner` modifier
+- Whether calling these functions out of sequence or with crafted arguments can inflate balances, skip emissions, or front-run legitimate callers for profit
+- Whether permissionless versions of accounting functions allow deposit-then-trigger patterns that capture inflated rewards in the same transaction

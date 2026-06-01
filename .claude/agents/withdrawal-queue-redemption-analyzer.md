@@ -136,3 +136,88 @@ Request processing loops that iterate over a range without verifying that each r
 - Whether `processWithdrawalRequests` (or equivalent) checks that `queuedWithdrawalHead < lastCreatedRequestId` before processing each entry — not just that the head has not passed the tail
 - Whether approved deposit/withdrawal requests can be replayed by the approver role because there is no completion-status flag on each request record
 - Whether a nonce or sequence number is marked as consumed immediately on first processing, preventing a second execution of the same request
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 16: Batch timestamp boundary mismatch between creation and claim eligibility
+Epoch/batch-based redemption queues define a batch by a timestamp range. If batch creation uses an inclusive upper boundary (`<=`) while claim eligibility uses an exclusive one (`<`), or vice versa, users can claim from a batch that does not include their request, or be locked out of a batch they should belong to. This accounting mismatch can result in double-claims or permanently unclaimable funds. Check:
+- Whether the timestamp condition used to assign a request to a batch in `createBatch` / `finalizeBatch` uses the same boundary operator (`<` vs `<=`) as the condition used in `claimRedemption` / `completeRedeem`
+- Whether requests submitted at the exact boundary timestamp (`block.timestamp == batchEnd`) are assigned to one batch on creation but validated against a different batch at claim time
+- Whether off-by-one batch index errors exist when requests iterate over `[batchStart, batchEnd)` vs `(batchStart, batchEnd]`
+- Whether the batch finalization step stores the inclusive/exclusive boundary explicitly so the claim step reads the same stored value rather than recomputing it
+```solidity
+// VULNERABLE — creation uses <= but claim uses <
+function createBatch(uint256 deadline) internal {
+    batches[batchId] = Batch({end: deadline}); // includes requests with ts == deadline
+}
+function claim(uint256 batchId, Request memory req) external {
+    require(req.timestamp < batches[batchId].end, "wrong batch"); // ❌ excludes ts == deadline
+}
+```
+
+### Case 17: Admin-rejected redemption request leaves user tokens permanently locked
+When a protocol allows an admin (or DEAL_ADMIN) to reject a pending redemption request, the user's tokens sent to the vault on initiation remain locked with no automated recovery path. The admin may be able to transfer tokens to an arbitrary address but there is no on-chain function to credit them back to the original requester via their normal account. Check:
+- Whether `rejectRedemptionRequest` / `denyWithdrawal` emits or stores enough information for the user to recover their locked tokens through a subsequent function call
+- Whether the rejected request is deleted from storage so that a re-submission is possible, or whether the slot remains occupied and prevents the user from re-queuing
+- Whether intermediate contracts (e.g., a Gateway or pool contract) that forwarded the user's initiation call are also notified of the rejection so they can credit the user back
+- Whether the admin rejection path transfers tokens back to the requester atomically rather than relying on a separate admin-controlled transfer
+
+### Case 18: Out-of-gas in recursive redemption claim due to unbounded small-chunk iteration
+Some redemption managers split a single large request into many small fulfillment chunks and process them with recursive or deeply-nested calls inside `_claimRedeemRequest`. When the number of chunks is large (e.g., many small withdrawal events covering one large redemption), the recursion depth exhausts the gas limit and permanently blocks the user from claiming. Check:
+- Whether `_claimRedeemRequest` (or equivalent) recurses into itself or calls a parent function that loops back, creating unbounded recursion depth proportional to the number of partial fills
+- Whether there is a maximum chunk count enforced at the time chunks are created, preventing a single redemption from being split into arbitrarily many small pieces
+- Whether the claim function accepts a `maxIterations` parameter so the caller can process chunks in multiple transactions rather than all at once
+- Whether small-value deposits or malicious dust contributions can fragment a withdrawal into many chunks as a griefing vector
+```solidity
+// VULNERABLE — recursive call proportional to number of chunks; large n = OOG
+function _claimRedeemRequest(uint256 redeemId, uint256 remaining) internal {
+    (uint256 chunk, bool done) = _nextChunk(redeemId);
+    _transferChunk(chunk);
+    if (!done) _claimRedeemRequest(redeemId, remaining - chunk); // ❌ unbounded recursion
+}
+```
+
+### Case 19: Strategy cap set to zero does not remove or revalue queued withdrawal shares
+When an admin sets a strategy's allocation cap to zero (effectively sunsetting it), queued withdrawal requests that reference that strategy's shares are not flushed or repriced. The `totalSharesHeld` counter for the strategy remains at its pre-zeroing value, and withdrawal queue entries continue to expect assets from a strategy that is no longer funded, causing permanent stuck withdrawals or incorrect TVL accounting. Check:
+- Whether `setStrategyCapToZero` / `updateStrategyAllocation(0)` also iterates or flags outstanding withdrawal queue entries for that strategy so they can be rerouted or cancelled
+- Whether `totalSharesHeld` (or equivalent) for a zeroed strategy is decremented to reflect that no new redemptions will be funded from it
+- Whether the withdrawal queue processing logic skips or errors on entries that reference a zero-cap strategy, and whether users receive an actionable recovery path
+- Whether the admin flow for zeroing a cap requires a check that `pendingWithdrawals[strategy] == 0` before the change takes effect
+
+### Case 20: Fee applied after minimum-output check causes user to receive less than slippage tolerance
+Redemption flows that validate a `minRedeemAmount` (slippage guard) before deducting protocol fees allow the fee to reduce the actual output below the user's declared minimum. The user believes they are protected by the slippage check, but they receive `outputAfterFee < minRedeemAmount`. Check:
+- Whether `executeRedemptionRequest` / `_executeRedeem` deducts fees *before* comparing the output to `minRedeemAmount`, not after
+- Whether the same ordering issue exists for both the instant-redemption path and the queued-redemption path (often implemented as separate functions with different orderings)
+- Whether fee changes (rate increase) between request time and execution time can push the net output below a minimum that was valid at request time
+- Whether the natspec / UI documentation communicates that `minRedeemAmount` refers to the gross output before fees, potentially misleading integrators
+```solidity
+// VULNERABLE — fee deducted after the check; user receives less than minAmount
+function _executeRedeem(uint256 shares, uint256 minAmount) internal {
+    uint256 gross = sharesToAssets(shares);
+    require(gross >= minAmount, "slippage");   // ❌ check on gross, not net
+    uint256 fee = gross * feeRate / 1e18;
+    transfer(msg.sender, gross - fee);         // user gets gross - fee < minAmount
+}
+// CORRECT — deduct fee first, then check
+function _executeRedeem(uint256 shares, uint256 minAmount) internal {
+    uint256 gross = sharesToAssets(shares);
+    uint256 fee = gross * feeRate / 1e18;
+    uint256 net = gross - fee;
+    require(net >= minAmount, "slippage");
+    transfer(msg.sender, net);
+}
+```
+
+### Case 21: Epoch-cycle batch debt continues accruing interest after borrower repays pending withdrawal tranche
+In epoch-based lending or yield protocols, a withdrawal batch accumulates a debt that the borrower must repay. If the protocol's state-update function only processes the batch at the *end* of a cycle, a borrower who repays the batch debt mid-cycle continues accruing interest on an amount that is already repaid. Check:
+- Whether `_getUpdatedState` / `updateState` processes (clears) a completed withdrawal batch whenever the repayment is detected, not only at cycle boundaries
+- Whether the interest accrual calculation uses the *remaining* batch debt (after repayment) or the *original* batch debt for the full cycle duration
+- Whether a borrower who deposits exactly the withdrawal batch amount sees their pending-withdrawal debt immediately zeroed in the state, or whether they must wait for `processWithdrawalBatch` to be called explicitly
+- Whether partial batch repayments correctly reduce the accrued-interest base proportionally
+
+### Case 22: Available unlocked tokens ignored when queuing new withdrawal — unnecessary delay and DoS
+When a withdrawal is requested and there are already sufficient unlocked (idle) tokens in the contract to cover it, the protocol should satisfy the request immediately rather than queuing it. Failing to check existing unlocked balances causes avoidable delays and, in epoch-locked systems, can make currently-available funds inaccessible for the remainder of the epoch (a denial-of-service for the requesting user). Check:
+- Whether `requestWithdraw` / `initiateUnstake` checks the contract's current idle/unlocked token balance before creating a queue entry, and fulfills immediately if sufficient
+- Whether the liquidity-check branch (`if (balance >= requested)`) appears in all redemption entry points (instant path *and* queued path), or only in the instant path
+- Whether an attacker can force a small unlock that bumps unlocked balance to a non-zero value, causing subsequent legitimate withdrawals to stall because the partial-check path incorrectly concludes there is enough liquidity
+- Whether the contract distinguishes between tokens unlocked for *other* pending requests and tokens freely available for new requests

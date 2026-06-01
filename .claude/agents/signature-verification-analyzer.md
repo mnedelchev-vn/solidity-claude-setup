@@ -299,3 +299,163 @@ ERC-4337 introduces `validateUserOp` for custom signature validation. Check:
 - That the `validationData` return value correctly encodes the `validAfter` and `validUntil` timestamps
 - That modules/plugins that extend validation cannot weaken the base signature check
 - That EIP-7702 delegation interactions don't create order-dependent validation issues where delegation status changes between validation and execution
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 21: Failed meta-transaction replay (nonce not consumed on revert)
+When a meta-transaction execution reverts internally, the nonce must still be incremented. If the nonce is only incremented on success, an attacker can replay the same signed meta-transaction repeatedly whenever conditions allow. Check:
+- That the nonce is incremented (or marked used) before the inner call executes, not after
+- That a failed inner call does not revert the nonce increment
+- That `executeMetaTransaction`-style functions consume the nonce regardless of the inner call's outcome
+```
+// BAD -- nonce consumed only on success; replays possible if call fails
+function executeMetaTransaction(address user, bytes memory fnData, uint8 v, bytes32 r, bytes32 s) external {
+    // verify sig against nonces[user] ...
+    (bool success,) = address(this).call(abi.encodePacked(fnData, user));
+    if (success) nonces[user]++; // nonce NOT consumed on failure -- replay
+}
+
+// GOOD -- consume nonce unconditionally
+nonces[user]++;
+(bool success,) = address(this).call(abi.encodePacked(fnData, user));
+```
+
+### Case 22: Cross-function signature replay (same nonce namespace for different operations)
+When multiple functions share the same nonce counter or accept the same signature format, a signature intended for one function can be replayed in a different function context. This is especially common in protocols where stake/unstake/reward, refinance/addTranche, or withdraw/cancel operations use identical digest structures. Check:
+- That each distinct operation includes a unique function selector or action identifier in the signed digest
+- That signatures for operation A cannot be submitted to operation B (different typehashes per action)
+- That cross-contract reuse is also blocked (e.g., a "refinance" signature cannot be used as an "addTranche" signature)
+```
+// BAD -- same typehash for two operations
+bytes32 ACTION_TYPEHASH = keccak256("Action(address user,uint256 amount,uint256 nonce)");
+
+// GOOD -- distinct typehash per operation
+bytes32 STAKE_TYPEHASH   = keccak256("Stake(address user,uint256 amount,uint256 nonce)");
+bytes32 UNSTAKE_TYPEHASH = keccak256("Unstake(address user,uint256 amount,uint256 nonce)");
+```
+
+### Case 23: Proxy instances sharing the same domain separator
+When multiple proxies (minimal proxies / beacon proxies) point to the same implementation, and the domain separator is computed in the implementation constructor or stored as an immutable/constant, all proxies share the same domain separator. A signature obtained for one proxy instance is valid on every other instance. Check:
+- That the domain separator is computed in the proxy's `initialize()` function using `address(this)`, not in the implementation constructor
+- That the domain separator is NOT stored as an `immutable` in an implementation contract used by multiple proxies
+- That upgradeable token contracts recompute the domain separator with the proxy address, not the logic address
+```
+// BAD -- domain separator set in implementation constructor, same for all proxies
+constructor() {
+    DOMAIN_SEPARATOR = keccak256(abi.encode(TYPE_HASH, ..., address(this)));
+}
+
+// GOOD -- set during initialization, address(this) is the proxy
+function initialize(string memory name) external initializer {
+    DOMAIN_SEPARATOR = keccak256(abi.encode(TYPE_HASH, ..., address(this)));
+}
+```
+
+### Case 24: Token name/state change invalidates cached EIP-712 domain separator
+If a token's name (or other domain separator fields such as version) can be updated after deployment, but the domain separator is cached at construction time, all subsequent permit signatures will fail silently or use a stale domain. Check:
+- That any mutable field included in the domain separator (name, version) triggers a recomputation of the domain separator
+- That the domain separator is either recomputed dynamically (via a view function) or that the name/version fields are immutable
+- That upgradeable contracts that expose a `setName()` or similar function also update the domain separator
+```
+// BAD -- name can change but DOMAIN_SEPARATOR is immutable
+bytes32 public immutable DOMAIN_SEPARATOR;
+constructor(string memory name_) {
+    DOMAIN_SEPARATOR = _buildDomainSeparator(name_);
+}
+function setName(string memory newName) external onlyOwner { name = newName; } // DOMAIN_SEPARATOR now stale
+
+// GOOD -- recompute on every access
+function DOMAIN_SEPARATOR() public view returns (bytes32) {
+    return _buildDomainSeparator(name);
+}
+```
+
+### Case 25: Permit2 token address not validated against expected token
+When integrating Permit2, the permit call must validate that the token in the `PermitTransferFrom` / `permitWitnessTransferFrom` struct matches the token the protocol actually intends to receive. If the check is omitted, a user can craft a permit signature for an arbitrary ERC-20 token and the vault will accept it. Check:
+- That after calling `permit2.permitTransferFrom(...)`, the protocol verifies `permit.permitted.token == expectedToken`
+- That `permitWitnessTransferFrom` witness type strings include all relevant order fields (token, amount, recipient)
+- That a user cannot substitute a low-value token for the intended token by crafting a matching permit
+```
+// BAD -- any token is accepted
+permit2.permitTransferFrom(permit, transferDetails, msg.sender, sig);
+// vault proceeds assuming USDC was transferred
+
+// GOOD -- validate the token
+require(permit.permitted.token == USDC, "wrong token");
+permit2.permitTransferFrom(permit, transferDetails, msg.sender, sig);
+```
+
+### Case 26: Nonce reset on ownership transfer enables old-signature replay
+When a contract's nonce mapping is keyed by owner address and the ownership (or signer key) is transferred, the new owner's nonce starts at 0. If an attacker keeps a valid old signature (signed when the nonce was 0 for the original owner), transferring ownership back to that address makes the old signature valid again. Similarly, resetting nonce to 0 on `notifyAccountTransfer` or similar hooks re-enables previously used signatures. Check:
+- That nonces are never reset to zero on ownership changes
+- That `notifyAccountTransfer` / account migration hooks do not zero-out the nonce
+- That revoked or invalidated nonce ranges are preserved after key rotation
+```
+// BAD -- nonce reset to 0 when owner changes, old sig at nonce=0 becomes replayable
+function notifyAccountTransfer(address, address) external {
+    nonce = 0; // dangerous
+}
+
+// GOOD -- preserve or advance the nonce
+function notifyAccountTransfer(address, address) external {
+    // nonce unchanged, or advance to a safe sentinel value
+}
+```
+
+### Case 27: ERC-6492 factory side-effects not reverted on signature validation
+ERC-6492 defines a signature format for pre-deployed (counterfactual) contract wallets: the validator calls the factory to deploy the wallet, then checks `isValidSignature`. Implementations that do not revert factory deployment side-effects after validation allow an attacker to trigger arbitrary factory calls (deploying wallets, spending approvals, or initializing modules) simply by crafting a valid-looking ERC-6492 signature. Check:
+- That ERC-6492 validation uses a reverting wrapper so factory side-effects cannot persist after the `isValidSignature` check
+- That `isValidERC6492SignatureNow` variants explicitly ensure all state changes from the factory call are reverted
+- That `SpendPermissionManager` or similar contracts using ERC-6492 cannot be drained by an attacker who controls the factory address field in the signature
+```
+// BAD -- factory side-effects persist after validation
+(bool ok,) = factory.call(factoryCalldata); // deploys wallet or modifies state
+bytes4 result = IAccount(account).isValidSignature(hash, sig);
+// factory deployment is NOT reverted -- attacker can exploit this
+
+// GOOD -- wrap in a reverting outer call so only the return value escapes
+```
+
+### Case 28: Unsigned validity window (validAfter / validUntil) in ERC-4337 UserOps
+In ERC-4337, the `validationData` return value from `validateUserOp` encodes `validAfter` and `validUntil` timestamps. If these timestamps are passed as user-supplied inputs but are not included in the signed digest, an attacker can extend or shrink the validity window of any UserOp without invalidating the signature. Check:
+- That `validAfter` and `validUntil` (or any validity window metadata) are included in the EIP-712 typehash signed by the owner
+- That the values packed into `validationData` are derived from the signed data, not from unsanitized user input
+- That paymaster gas limits and paymaster-specific parameters are also covered by the paymaster's own signature
+```
+// BAD -- validity window taken from user input, not covered by signed digest
+function validateUserOp(PackedUserOperation calldata op, bytes32, uint256) external returns (uint256) {
+    (uint48 validAfter, uint48 validUntil, bytes memory sig) = abi.decode(op.signature, (uint48, uint48, bytes));
+    // validAfter/validUntil NOT in signed digest -- attacker controls the window
+    _validateSignature(op, sig);
+    return _packValidationData(false, validUntil, validAfter);
+}
+```
+
+### Case 29: EIP-712 dynamic types (bytes/string) not hashed before encoding
+The EIP-712 specification requires that dynamic types (`bytes`, `string`) are encoded as `keccak256` of their content, not as raw values. Including a raw `bytes` field inside `abi.encode(TYPEHASH, ..., bytesValue)` without first hashing it causes a digest mismatch with any compliant off-chain signer (e.g., MetaMask, ethers.js, viem) and silently makes all signatures invalid or forgeable. Check:
+- That all `bytes` and `string` fields in the struct hash are wrapped in `keccak256(value)` before being passed to `abi.encode`
+- That the typehash string correctly lists the field type as `bytes` or `string` (not `bytes32`)
+- That the encoding matches what standard EIP-712 tooling would produce for the same struct
+```
+// BAD -- raw bytes included without hashing
+bytes32 digest = keccak256(abi.encode(TYPEHASH, sender, data)); // data is bytes
+
+// GOOD -- hash dynamic types first
+bytes32 digest = keccak256(abi.encode(TYPEHASH, sender, keccak256(data)));
+```
+
+### Case 30: EIP-712 typehash missing nested struct sub-type definition
+Per EIP-712, when a struct contains another struct as a field, the nested struct's type string must be appended to the enclosing type string, and the nested struct must itself be hashed via its own typehash. Omitting the sub-type hash or using unsupported types (e.g., `enum`) causes signature mismatches with compliant tooling. Check:
+- That structs with nested struct fields include the nested type definition appended to the parent type string
+- That the on-chain encoding hashes the nested struct with `keccak256(abi.encode(SUB_TYPEHASH, ...))` and uses that hash in the parent encoding
+- That `enum` types are replaced with their underlying integer type (e.g., `uint8`) in the typehash string, since EIP-712 does not support `enum`
+```
+// BAD -- nested struct Token not referenced in type string, enum used directly
+bytes32 ORDER_TYPEHASH = keccak256("Order(address maker,Token token,TransferType txType)");
+
+// GOOD -- sub-type appended, enum replaced with uint8
+bytes32 TOKEN_TYPEHASH = keccak256("Token(address addr,uint256 chainId)");
+bytes32 ORDER_TYPEHASH = keccak256("Order(address maker,Token token,uint8 txType)Token(address addr,uint256 chainId)");
+bytes32 tokenHash = keccak256(abi.encode(TOKEN_TYPEHASH, token.addr, token.chainId));
+bytes32 orderHash = keccak256(abi.encode(ORDER_TYPEHASH, maker, tokenHash, uint8(txType), amount));
+```

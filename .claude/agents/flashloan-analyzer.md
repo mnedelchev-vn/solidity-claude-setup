@@ -99,3 +99,161 @@ Some protocols have per-block or per-transaction limits. Check:
 - Whether flash loans allow bypassing deposit caps by depositing, borrowing, and repeating
 - Whether flash loans allow leveraged positions beyond intended limits
 - Whether rate limiters are per-address only (circumventable by using multiple addresses with flash loans)
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 10: Flash loan same-block stake-then-claim reward theft
+An attacker flash-loans staking tokens, deposits (or stakes), immediately claims accrued rewards, then withdraws and repays — all in one transaction. The protocol distributes rewards proportional to instantaneous balance with no lock period. Check:
+- Whether staking or LP contracts allow deposit and withdrawal in the same transaction (or block) with no minimum lock period
+- Whether reward snapshots or indices are updated at deposit time, allowing a flash depositor to claim rewards accrued by legitimate stakers
+- Whether gauge or farm contracts use `balanceOf` at the moment of claiming rather than a time-weighted or checkpointed balance
+- Whether `Checkpoints#getAtBlock()` can return a flash-loan-inflated value for the current block, allowing staking weight to be faked
+- Whether any reward-claiming path reads total supply or individual balance without excluding same-block depositors
+```solidity
+// BAD — no lock, rewards claimable immediately
+function deposit(uint256 amount) external {
+    _updateRewards(msg.sender);
+    balances[msg.sender] += amount;
+    token.transferFrom(msg.sender, address(this), amount);
+}
+function claim() external {
+    _updateRewards(msg.sender);
+    uint256 reward = earned[msg.sender];
+    earned[msg.sender] = 0;
+    rewardToken.transfer(msg.sender, reward);
+}
+
+// GOOD — track deposit block and prevent same-block withdrawal/claim
+mapping(address => uint256) public depositBlock;
+function withdraw(uint256 amount) external {
+    require(block.number > depositBlock[msg.sender], "No same-block withdraw");
+    ...
+}
+```
+
+### Case 11: Flash loan reward/weight inflation via real-time balance reads
+Protocols that compute voting weight, pool share weight, or distribution fractions by reading `balanceOf` or pool reserves in real time (not from a historical snapshot) are vulnerable to flash-loan inflation. Check:
+- Whether reward allocation weights (e.g., gauge weights, pool share weights) are derived from spot token balances or pool reserves at call time
+- Whether any distribution or minting function reads `totalSupply` or individual balance without a time-weighted or committed snapshot
+- Whether receipt tokens (e.g., aTokens, LP tokens) issued by the same protocol can be flash-borrowed and used to inflate the caller's recorded balance before a reward checkpoint
+- Whether veToken balances (e.g., veALCX) are transferable and therefore flash-borrowable for vote inflation
+```solidity
+// BAD — weight computed from live balance
+function getWeight(address user) public view returns (uint256) {
+    return token.balanceOf(user) * poolReserve / totalSupply; // flash-inflatable
+}
+
+// GOOD — use a committed snapshot or ERC20Votes-style checkpoint
+function getWeight(address user) public view returns (uint256) {
+    return token.getPastVotes(user, block.number - 1);
+}
+```
+
+### Case 12: Flash loan manipulation of LP token / Curve pool pricing
+Protocols that value LP tokens or collateral using Curve's `calc_withdraw_one_coin`, `get_virtual_price`, or similar pool-state-dependent functions are vulnerable to single-transaction pool manipulation via flash loans. Check:
+- Whether LP token valuation uses Curve's `calc_withdraw_one_coin` or `get_dy` which reads current pool balances
+- Whether a Curve or Balancer pool's virtual price or depeg detection logic can be skewed by a large flash-loan-driven imbalance
+- Whether collateral status checks (e.g., `_anyDepeggedInPool`) rely on pool ratios that can be momentarily moved outside thresholds by a flash loan, triggering forced rebalancing
+- Whether the protocol fetches LP fair value by dividing pool reserves by total supply (reserve-ratio method) rather than using a manipulation-resistant formula (e.g., geometric mean or external oracle)
+
+### Case 13: Flash loan protection bypass via same-block position manipulation
+Protocols implement "flash loan guards" that track a user's state at the start of a transaction, but the guard can be bypassed by manipulating state through a different code path (self-liquidation, debt increase followed by closure, or flash-loan-assisted balance change) within the same block. Check:
+- Whether the flash loan guard only tracks a single flag or balance snapshot and can be reset or bypassed by an intermediate call (e.g., self-liquidation, vault closure)
+- Whether opening and closing a position in the same block is possible, allowing an attacker to claim rewards or manipulate metrics without holding collateral across blocks
+- Whether a protocol's cap (e.g., max locked supply) is checked against a balance that the flash loan itself temporarily reduces, making the cap bypassable during the loan
+- Whether debt-increase operations within a flash loan callback can push a position above intended thresholds that are only checked at loan initiation
+```solidity
+// BAD — guard only checks entry, not re-entry via alternate path
+modifier flashGuard() {
+    require(!inFlashLoan[msg.sender], "Flash loan in progress");
+    inFlashLoan[msg.sender] = true;
+    _;
+    inFlashLoan[msg.sender] = false;
+}
+// Attacker bypasses via self-liquidation path which doesn't set inFlashLoan
+
+// GOOD — use a block-level lock or invariant check at the end
+uint256 private _lockedBlock;
+modifier noSameBlock() {
+    require(block.number > _lockedBlock, "Same block");
+    _lockedBlock = block.number;
+    _;
+}
+```
+
+### Case 14: Unvalidated flash loan callback data enabling arbitrary execution
+When a flash loan callback (e.g., `receiveFlashLoan`, `executeOperation`, `onFlashLoan`) does not validate the `data` / `params` payload passed by the flash loan provider, an attacker can trigger the callback with crafted data to execute arbitrary operations on behalf of the contract. Check:
+- Whether the flash loan callback decodes and executes instructions from the `data` parameter without verifying those instructions were authored by the contract itself
+- Whether an attacker can call the flash loan provider (e.g., Balancer Vault) directly, specifying the vulnerable contract as `recipient`, and supply malicious `userData`
+- Whether the callback validates that the loan was self-initiated (e.g., a nonce or hash of the original call data stored before the loan was taken)
+- Whether the callback can be used to call `approve`, `transfer`, or other privileged functions with attacker-controlled arguments
+```solidity
+// BAD — executes arbitrary instructions from untrusted data
+function receiveFlashLoan(address[] memory, uint256[] memory amounts,
+        uint256[] memory fees, bytes memory userData) external {
+    (address target, bytes memory callData) = abi.decode(userData, (address, bytes));
+    target.call(callData); // attacker controls target and callData
+}
+
+// GOOD — validate data was committed before the loan was initiated
+bytes32 private _pendingOpHash;
+function initiateOperation(bytes memory params) external {
+    _pendingOpHash = keccak256(params);
+    balancerVault.flashLoan(this, tokens, amounts, params);
+    _pendingOpHash = bytes32(0);
+}
+function receiveFlashLoan(..., bytes memory userData) external {
+    require(msg.sender == address(balancerVault), "Not vault");
+    require(keccak256(userData) == _pendingOpHash, "Invalid params");
+    ...
+}
+```
+
+### Case 15: Flash loan borrower not accounting for provider fees in repayment logic
+Protocols or strategies that internally use flash loans to perform leveraged operations (open/close leverage, harvest, rebalance) often compute the exact repayment amount without including the flash loan fee, causing the operation to revert or leave the contract insolvent when fees are non-zero. Check:
+- Whether the internal `loanAmount` or `repayAmount` calculation adds the provider's fee on top of the principal before computing how much collateral to sell or how much debt to repay
+- Whether harvest or rebalance functions that use flash loans will silently fail or leave bad debt when the protocol fee is changed from zero to non-zero
+- Whether `receiveFlashLoan` / `onFlashLoan` callbacks repay exactly `amount` instead of `amount + fee`, causing revert when the provider charges non-zero fees
+- Whether the fee is fetched dynamically at call time (`flashFee(token, amount)`) rather than hardcoded to zero
+```solidity
+// BAD — repays only the principal, ignores fee
+function receiveFlashLoan(address token, uint256 amount, uint256 fee, bytes memory) external {
+    // ... do work ...
+    IERC20(token).transfer(msg.sender, amount); // fee not included — reverts if fee > 0
+}
+
+// GOOD — always repay principal + fee
+function receiveFlashLoan(address token, uint256 amount, uint256 fee, bytes memory) external {
+    // ... do work ...
+    IERC20(token).transfer(msg.sender, amount + fee);
+}
+```
+
+### Case 16: Flash mint fee overflow allowing zero-cost loans
+If a flash mint implementation adds the fee to the loan amount using unchecked arithmetic (or a checked addition that can overflow), an attacker can request a sufficiently large mint amount such that `amount + fee` overflows to a small number, effectively borrowing for free. Check:
+- Whether `flashLoan` or `flashMint` computes `amount + fee` without overflow protection before verifying the returned balance
+- Whether the `maxFlashLoan` cap is large enough (e.g., `type(uint256).max`) to allow amounts that overflow when the fee is added
+- Whether the balance check after the callback compares against the overflowed value, allowing the loan to pass without full repayment
+- Whether the fee rate is stored as a fraction that can produce a very small fee (rounding to zero), effectively making flash loans free
+```solidity
+// BAD — unchecked addition can overflow
+function flashLoan(IERC3156FlashBorrower receiver, address token,
+        uint256 amount, bytes calldata data) external returns (bool) {
+    uint256 fee = flashFee(token, amount);
+    _mint(address(receiver), amount);
+    receiver.onFlashLoan(msg.sender, token, amount, fee, data);
+    uint256 repayment = amount + fee; // overflows if amount is near type(uint256).max
+    _burn(address(receiver), repayment);
+}
+
+// GOOD — use checked arithmetic or validate amount before proceeding
+require(amount <= maxFlashLoan(token), "Exceeds max");
+uint256 repayment = amount + fee; // Solidity 0.8+ reverts on overflow
+```
+
+### Case 17: Flash loan manipulation of utilization-rate-derived values
+Interest rates, emission rates, stable borrow rates, and other protocol parameters derived from utilization ratios can be atomically manipulated via flash loans: the attacker borrows (or repays) a large amount, triggers the rate-update function at the skewed utilization, then repays the flash loan — locking in a manipulated rate that persists after the transaction. Check:
+- Whether interest rate or emission rate update functions read current pool utilization (`totalBorrows / totalLiquidity`) that can be moved by a flash loan within the same transaction
+- Whether the rate-update function has a dead-zone (e.g., updates only if utilization is strictly above or below target), allowing an attacker to pin the rate at an extreme value
+- Whether stable borrow rates are set at the moment of borrowing based on spot utilization, allowing an attacker to flash-manipulate utilization before a victim's borrow to assign them an unfavorable rate
+- Whether the protocol snapshots utilization at the start of a block or uses a time-weighted average rather than a spot reading

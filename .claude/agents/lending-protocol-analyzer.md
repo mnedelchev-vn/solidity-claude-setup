@@ -197,3 +197,148 @@ token.safeApprove(pool, amount); // USDT requires setting to 0 first
 token.safeApprove(pool, 0);
 token.safeApprove(pool, amount);
 ```
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 16: Interest rate model update retroactively misapplies new rate
+When an admin updates the interest rate model (or its parameters), the protocol must accrue all pending interest under the OLD model first. If `accrueInterest()` is not called before the model is swapped, the next accrual silently applies the new rate to the entire period since the last accrual — overcharging or undercharging all borrowers. Check:
+- Whether `accrueInterest()` / `_accrueInterest()` is called atomically before any admin function that changes `interestRateModel`, `reserveFactor`, or rate parameters
+- Whether `updateInterestRates()` is invoked after changing the reserve factor so pending liquidity/borrow rate state is refreshed
+- Whether changing `blocksPerYear` or time-scaling constants retroactively mis-prices already-elapsed time
+- Whether the protocol stores a "last-applied model" reference so historical interest is never recalculated under a different curve
+- Whether governance timelocks give borrowers enough time to repay before a punitive rate takes effect
+```
+// BAD — swaps model without accruing; next accrueInterest() will use newModel for the full elapsed period
+function setInterestRateModel(address newModel) external onlyAdmin {
+    interestRateModel = newModel; // accrueInterest() NOT called first
+}
+
+// GOOD
+function setInterestRateModel(address newModel) external onlyAdmin {
+    accrueInterest(); // settle all debt under current model
+    interestRateModel = newModel;
+}
+```
+
+### Case 17: Pause / unpause creates interest accrual gaps or blocks repayment
+Pausing a lending pool typically freezes `accrueInterest`, but the pause duration is not subtracted from the interest period. On unpause the protocol charges interest for the entire paused window. Conversely, if `repay` is gated by `whenNotPaused`, borrowers cannot reduce their debt while interest continues to grow, causing mass under-collateralization on unpause. Check:
+- Whether `repay` and `liquidate` are allowed even when the protocol is paused (they should be; only new borrows/deposits need blocking)
+- Whether unpausing resets `lastAccrualTimestamp` to the current block (correct) or leaves it as the pre-pause time (wrong — charges phantom interest)
+- Whether `accrueInterest()` is called immediately before pausing so the timestamp is recorded correctly
+- Whether per-ILK / per-market pause correctly handles the multi-collateral case (accruing for some ILKs but not others desynchronizes the supply factor)
+- Whether governance-enforced pause periods have a hard cap to limit maximum uncharged interest accumulation
+```
+// BAD — repay blocked during pause; interest keeps accruing
+function repay(uint256 amount) external whenNotPaused { ... }
+
+// GOOD — repay always allowed; only new borrows restricted
+function repay(uint256 amount) external { ... }
+function borrow(uint256 amount) external whenNotPaused { ... }
+```
+
+### Case 18: Utilization rate uses raw / unscaled debt values
+The utilization rate drives the interest rate curve. Several recurring bugs arise from mixing scaled and unscaled (normalised) debt values, or omitting borrows from the denominator altogether. These silently over- or under-price borrow rates for all users. Check:
+- Whether `utilizationRate = totalBorrows / (totalCash + totalBorrows - reserves)` — borrows must appear in both numerator and denominator; `totalCash`-only denominator causes >100% utilisation at high borrow levels
+- Whether `totalBorrows` is the normalised (index-scaled) value, not the raw shares; mixing shares and amounts inflates or deflates utilisation
+- Whether `DebtToken.totalSupply()` uses the variable borrow index (not the liquidity index) before feeding into utilisation calculations
+- Whether the available-liquidity variable fed to the IRM accounts for protocol reserves being non-lendable
+- Whether minipool / adapter "available flow" from a parent pool is incorrectly counted as idle liquidity, deflating utilisation
+```
+// BAD — denominator is only cash; utilisation > 100% is possible
+uint256 utilization = totalBorrows * 1e18 / totalCash;
+
+// GOOD
+uint256 utilization = totalBorrows * 1e18 / (totalCash + totalBorrows - reserves);
+```
+
+### Case 19: Interest rate model manipulation via flash loan or same-block borrow/repay
+Protocols that compute the borrow rate from instantaneous on-chain state (current liquidity, current borrows) allow attackers to borrow-and-repay in one transaction to spike or crash the rate. Adaptive / PI controllers that persist the rate across calls are especially vulnerable. Check:
+- Whether the IRM reads `totalBorrows` and `totalCash` at the moment of the call rather than a time-weighted average
+- Whether an attacker can borrow a large amount, call a public rate-oracle or `update()` function, and repay — leaving the protocol with an artificially shifted rate for the next epoch
+- Whether emission rate or reward multipliers are derived from the same live utilisation variable (flash-inflating utilisation inflates emissions)
+- Whether the PI / adaptive IRM stores `errI` (integral term) and it can be permanently shifted by a large but brief utilisation spike
+- Whether `accrueInterest` is called before rate-dependent state reads so at least the time component is accurate
+```
+// BAD — rate oracle reads live balances; flash loan can spike it
+function getRate() external view returns (uint256) {
+    return calculateRate(token.balanceOf(address(this)), totalBorrows);
+}
+```
+
+### Case 20: Cross-chain lending updates the wrong chain's borrow balance
+Protocols that allow borrowing on one chain against collateral on another must relay the updated balance back to every chain that tracks it. A repayment or new borrow that only updates the local chain leaves the remote chain with a stale (too-high or too-low) balance, enabling free borrowing or blocking legitimate repayment. Check:
+- Whether `repayBorrow` on the spoke chain sends a cross-chain message to update the hub's `borrowBalance` (not just the local mapping)
+- Whether a second borrow of the same asset on a different chain accrues interest on the existing principal before recording new debt
+- Whether the cross-chain message uses the correct asset/chain identifiers so the update targets the right position
+- Whether race conditions between two in-flight cross-chain messages can result in the later one overwriting the earlier balance
+- Whether partial repayments across chains are summed correctly on the hub so the aggregate position stays solvent
+
+### Case 21: Accrual only triggered on the current-market token, not all debt tokens in a position
+Protocols supporting multi-asset positions (e.g., BlueBerry, Notional vaults) call `poke(token)` or equivalent only for the asset being borrowed/repaid. Other tokens in the same position are not accrued, leading to stale interest on those assets, incorrect health-factor checks, and mismatched utilisation. Check:
+- Whether `borrow(tokenA)` accrues interest on every other token the position currently owes (tokenB, tokenC …)
+- Whether `repay(tokenA)` does the same — stale interest on tokenB can make a healthy-looking position insolvent after the next `poke`
+- Whether the health check aggregates current debt across ALL tokens using fresh indices, not a mix of fresh and stale values
+- Whether protocols that loop through a position's debt list call `accrueInterest` on each entry before summing
+- Whether adding a new debt token to a position triggers accrual on the pre-existing debts
+
+### Case 22: Minimum debt threshold missing — dust positions become economically unliquidatable
+When a borrower repays most but not all of their debt, a dust amount can remain. If the residual is below the gas cost a liquidator would spend, no one will liquidate it. Over time, many dust positions accumulate as irrecoverable bad debt. Check:
+- Whether a `minDebt` / `dustThreshold` is enforced on every partial repay and borrow (not only on initial borrow)
+- Whether closing a position to exactly 0 is always allowed even if intermediate states would violate `minDebt`
+- Whether the threshold is denominated in the borrow token (not shares) so it scales correctly with token decimals
+- Whether the minimum is re-checked after any redistribution or liquidation that could reduce another user's debt below the floor
+- Whether secondary / vault debts (e.g., Notional's `accountDebtOne`, `accountDebtTwo`) are subject to the same minimum as the primary debt
+```
+// BAD — no floor on remaining debt after partial repay
+function repay(uint256 amount) external {
+    debtOf[msg.sender] -= amount;
+}
+
+// GOOD — revert if residual is non-zero but below dust
+function repay(uint256 amount) external {
+    uint256 remaining = debtOf[msg.sender] - amount;
+    require(remaining == 0 || remaining >= MIN_DEBT, "Dust debt");
+    debtOf[msg.sender] = remaining;
+}
+```
+
+### Case 23: Reserve factor change not triggering an immediate interest rate recalculation
+The reserve factor controls how much of accrued interest goes to the protocol versus suppliers. If the factor is updated without calling `updateInterestRates()`, the in-memory rate snapshot used by the next accrue cycle is stale. Depending on direction, suppliers are over- or under-compensated and the protocol captures the wrong fee share. Check:
+- Whether `setReserveFactor()` / `updateReserveFactor()` ends with a call to `updateInterestRates()` or equivalent so the supply APY is immediately recalculated
+- Whether the change is applied consistently to all pools/reserves (not just the one currently being transacted)
+- Whether a retroactive reserve-factor increase silently skims interest that suppliers already earned (previously accrued but not yet distributed)
+- Whether the reserve factor is validated to remain within [0, MAX_RESERVE_FACTOR] to prevent the protocol from taking 100% of yield
+- Whether governance proposals that change the factor emit an event so off-chain monitors can detect the change
+
+### Case 24: Interest accrual precision loss for low-decimal tokens
+Interest is usually computed as `principal * rate * timeDelta / SCALE`. For tokens with 6 or fewer decimals (USDC, USDT, EURS with 2 decimals), the numerator of the intermediate product can be smaller than the denominator, rounding the per-block interest to zero. Borrowers effectively pay no interest on small balances. Check:
+- Whether the protocol hardcodes an 18-decimal assumption in `accrueInterest` but the underlying token uses fewer decimals
+- Whether the interest formula scales up to a higher-precision intermediate before dividing by `SECONDS_PER_YEAR * IRM_SCALE`
+- Whether very short time deltas (1–2 blocks) consistently round to zero for any supported token
+- Whether the protocol normalises all amounts to 18-decimal ray/wad internally before arithmetic and converts back on exit
+- Whether integration tests cover 6-decimal and 2-decimal tokens, not only WETH/DAI
+```
+// BAD — for 6-decimal token with small balance: result rounds to 0
+uint256 interest = (principal * ratePerSecond * delta) / 1e27; // principal is 6-dec, product < 1e27
+
+// GOOD — scale up first
+uint256 interest = (principal * 1e12 * ratePerSecond * delta) / 1e27; // normalise to 18 dec then scale back
+```
+
+### Case 25: Origination / borrow fee applied before solvency check, causing instant undercollateralization
+Some protocols charge an upfront fee (origination fee, opening fee, borrowOpeningFee) by adding it to the borrower's debt at the time of borrowing. If the solvency check is performed before the fee is added — or if the fee pushes debt above the LTV cap — the position is unhealthy the moment it is created, enabling immediate liquidation by a waiting bot. Check:
+- Whether the origination fee is included in the debt amount used for the post-borrow health check (not just the requested principal)
+- Whether the fee-inclusive debt is compared against the collateral at the correct collateral factor (borrow LTV, not liquidation threshold)
+- Whether `borrowOpeningFee` is accumulated as protocol reserve separately from user debt to avoid double-counting
+- Whether a user who borrows exactly at max-LTV will be instantly liquidatable due to the fee making them exceed it
+- Whether the fee can be set arbitrarily high by an admin, allowing a governance attack that instantly liquidates all borrowers
+```
+// BAD — health check uses principal only; fee added after
+require(isHealthy(msg.sender, principal), "Unhealthy");
+debtOf[msg.sender] += principal + originationFee; // now unhealthy!
+
+// GOOD — include fee in the health projection
+uint256 totalNewDebt = principal + originationFee;
+require(isHealthy(msg.sender, totalNewDebt), "Unhealthy after fee");
+debtOf[msg.sender] += totalNewDebt;
+```

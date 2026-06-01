@@ -110,3 +110,128 @@ In epoch/round-based governance, users may vote, transfer tokens, and vote again
 - Whether voting weight is snapshot-based or balance-based (balance = double-countable)
 - Whether finalizing an epoch in multiple steps allows weight to be counted across steps
 - Whether delegation during an active vote period can shift already-cast votes
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 13: Gauge removal orphans user voting power
+When a gauge is removed by governance, any user voting power already allocated to it is silently dropped rather than returned, permanently locking that portion of the user's vote budget. Developers often forget to handle the "gauge deleted mid-vote" lifecycle.
+
+Check:
+- Whether `removeGauge` (or equivalent) resets or returns the voting power that users allocated to that gauge
+- Whether per-user `vote_user_slopes` and global `points_sum.slope` are decremented when a gauge is removed
+- Whether users can call a function to reclaim power from a removed gauge, or whether it is simply lost
+- Whether gauge weight history (`time_weight`) is properly zeroed to prevent stale weights being re-applied
+- Whether the `vote_for_gauge_weights` cooldown blocks users from reallocating power after a removal
+
+### Case 14: Expired veToken lock still accrues rewards or voting power
+Vote-escrow positions that have passed their unlock timestamp should have zero voting power and should stop accumulating bribes or gauge rewards. Implementations frequently check the lock amount but not whether the lock has expired.
+
+Check:
+- Whether `balanceOf` / `getPastVotes` returns 0 once `block.timestamp >= unlock_time`
+- Whether reward or bribe contracts read stale `s_votesByPool` / voting checkpoints that are never cleared on expiry
+- Whether a user can trigger `poke` or `carryVoteForward` after their lock expires to still direct emissions
+- Whether gauge bribe contracts clear a user's allocation when their lock expires rather than carrying it forward indefinitely
+
+### Case 15: veToken split / merge inflates voting power
+`split` and `merge` operations on veNFTs can be chained to create positions with more voting power than the underlying locked tokens justify. This happens when the bias (voting power) is calculated separately for each sub-position but not properly re-aggregated.
+
+Check:
+- Whether `split` validates that the sum of output amounts equals the input amount (no negative sub-positions)
+- Whether `merge` recomputes bias from the combined lock amount and remaining time, rather than naively summing the two old biases
+- Whether a user can merge a large token into a smaller expired one to reset the epoch counter and re-inflate bias
+- Whether `increase_amount` after a split re-uses the pre-split slope, double-counting decay
+```
+// BAD — split can create a position with negative/arbitrary amount
+function split(uint tokenId, uint amount) external {
+    LockedBalance memory lock = locked[tokenId];
+    locked[tokenId].amount -= int128(int256(amount)); // no check: amount may exceed lock.amount
+    _createLock(amount, lock.end);                    // attacker controls resulting voting power
+}
+
+// GOOD — validate invariant
+require(int128(int256(amount)) < lock.amount, "exceeds locked amount");
+require(lock.amount - int128(int256(amount)) > 0, "remainder must be positive");
+```
+
+### Case 16: Unchecked poke() / carryVoteForward() enables unbounded reward minting
+Many vote-escrow systems allow a `poke` function (or `carryVoteForward`) to refresh a user's allocation and trigger reward accrual. When the function lacks a `lastVoted` / per-epoch guard, it can be called repeatedly in the same epoch to mint reward tokens (e.g., FLUX) without limit.
+
+Check:
+- Whether `poke` checks that the caller has not already poked or voted in the current epoch/period
+- Whether `carryVoteForward` marks the token as having voted before crediting voting weight
+- Whether `reset` followed by `merge` resets the epoch counter, allowing a fresh `poke` on an already-claimed position
+- Whether the reward accrual path inside `poke` can be triggered independently of an actual vote cast
+
+### Case 17: Proposal can target its own governor or voting contract
+A proposal that passes calldata targeting the governor, voting token, or timelock itself can modify critical parameters (quorum, timelock delay, admin) or call internal functions like `_executeOperations` a second time. Developers rarely guard proposal targets.
+
+Check:
+- Whether proposal creation validates that none of the `targets[]` is the governor contract itself
+- Whether none of the `targets[]` is the voting/lock token contract (allowing forced transfers or delegation changes)
+- Whether the timelock's own admin-change function is callable via a regular proposal (bypassing guardian)
+- Whether a `delegatecall` target inside a proposal can reach `selfdestruct` or `_authorizeUpgrade`
+
+### Case 18: Quorum evaluated against current parameters, not snapshot at vote creation
+Some governors recompute quorum or the `voteSucceeded` threshold using the **current** `quorumNumerator` or total supply at execution time rather than at the snapshot block. An owner or governance actor can change these parameters after a vote closes to retroactively flip the outcome.
+
+Check:
+- Whether `quorum(proposalSnapshot)` is called with the snapshot block number or with `block.number`
+- Whether `proposalThreshold()` and `quorumNumerator()` are read from storage (mutable) rather than from a per-proposal snapshot
+- Whether an admin can call `updateQuorumNumerator` between vote closure and execution
+- Whether the `_voteSucceeded` logic references `forVotes > againstVotes` with a live supply denominator
+
+### Case 19: Vote signature (castVoteBySig) replay across proposals or chains
+EIP-712 signatures for `castVoteBySig` that omit a proposal-scoped nonce, a chain ID, or a contract address can be replayed on a different proposal, a forked chain, or a re-deployed governor.
+
+Check:
+- Whether the EIP-712 domain includes `chainId` and the verifying contract address
+- Whether the signed message commits to the specific `proposalId` (not just `support`)
+- Whether a nonce increments after each successful `castVoteBySig` call per account
+- Whether the same signature can be submitted by different callers to cast votes for different accounts on the same proposal
+
+### Case 20: Delegation not revoked on full withdrawal / unstake
+When a user fully withdraws staked or locked tokens, the delegation record is not cleared. The delegatee retains artificial voting power, and in reward systems the staker can re-stake and re-delegate repeatedly to inflate the delegatee's weight.
+
+Check:
+- Whether `withdraw()` / `unstake()` calls `_delegate(account, address(0))` or equivalent cleanup
+- Whether the delegatee's checkpoint is decremented to match the reduced or zeroed balance
+- Whether a user can call `stake → withdraw → stake` in a loop to accumulate delegated voting power beyond their actual balance
+- Whether vesting revocations subtract the correct delegated vote weight (not a stale or zero value)
+
+### Case 21: Proposal execution state not marked atomically, allowing re-execution
+In governor or timelock implementations that set `executed = true` after the external calls (or in a separate mapping from the one checked), a re-entrant callback or a separate `executeTransaction` call on the timelock can run the same proposal actions twice.
+
+Check:
+- Whether `executed` / `_operations[id]` is set to true **before** the external calls (Checks-Effects-Interactions)
+- Whether the timelock's `executeTransaction` is permissioned (only callable by the governor) or is publicly callable, allowing individual actions to be extracted and run separately
+- Whether `executeEmergencyAction` updates the same `_operations` mapping that `execute` checks
+- Whether repeated calls to `resolveProposal` or `settle` are guarded by a state transition check
+
+### Case 22: Proposal cancellation open to unauthorized actors
+Governance systems where any signer, any token holder, or even anyone with a zero-vote contribution can cancel a proposal turn cancellation into a griefing vector that can stall all governance activity.
+
+Check:
+- Whether `cancel` verifies the caller is the **proposer** or a role with explicit cancel authority
+- Whether any proposal signer (even one contributing 0 votes) can unilaterally cancel the proposal
+- Whether `cancel` validates the proposal is in a cancellable state (e.g., not already Queued or Executed)
+- Whether the `bytes32(0)` id or a default id can be passed to `cancel` to trigger unintended state resets
+- Whether a `CANCELLER_ROLE` holder can cancel all proposals, and whether that role can itself be revoked through a timelock-delayed transaction
+
+### Case 23: Cross-chain voting power fragmentation or duplication
+Token bridges that move governance tokens to L2 without coordinating with the L1 checkpoint system either (a) strip voting power from the bridged tokens entirely, or (b) allow the same tokens to vote on both chains simultaneously.
+
+Check:
+- Whether the L1 governor counts only L1-held balances (bridged tokens have no L1 voting power)
+- Whether an L2 governor independently counts tokens deposited there without deducting them from L1 supply
+- Whether the bridge burn/mint is reflected in `getPastVotes` checkpoints on both chains atomically
+- Whether total supply used for quorum calculation excludes tokens locked in the bridge contract
+
+### Case 24: GaugeController totalVotes / typeVotes arithmetic errors
+Ports of Curve's Vyper `GaugeController` to Solidity frequently introduce subtle arithmetic bugs in `_getTotal`, `_changeGaugeWeight`, or `changeGaugeWeight` where the loop iterates over gauge count instead of gauge type count, or where `oldSum` is multiplied instead of `typeWeight`, producing a permanently incorrect `totalVotes` denominator.
+
+Check:
+- Whether the loop that aggregates `totalVotes` iterates over `n_gauge_types` (correct) vs `n_gauges` (incorrect)
+- Whether `_changeGaugeWeight` multiplies `typeWeight * newSum` (correct) vs `typeWeight * oldSum` (wrong)
+- Whether `typeVotes` is updated separately from `totalVotes` and whether the update uses the right variable
+- Whether `_getTotal` short-circuits when `t > block.timestamp` and returns 0 instead of the previously stored value
+- Whether the formula correctly subtracts the old gauge's weighted contribution before adding the new one

@@ -110,3 +110,132 @@ When NFTs are used for access control (token-gating), the gating can be bypassed
 - Whether flash-loaning an NFT allows temporary access to gated functions
 - Whether transferring an NFT during a transaction allows double-use (use for access, then transfer to another address for more access)
 - Whether the protocol checks current ownership at the time of action (not at some past snapshot)
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 12: Royalty calculation mismatch / wrong basis
+Royalty logic frequently contains denomination errors — treating a returned royalty *amount* as a *percentage*, mismatched basis points between contracts, or applying per-item royalties to the whole batch. Check:
+- Whether `royaltyInfo(tokenId, salePrice)` return values are used correctly: the second return value is an *amount*, not a percentage
+- Whether two interacting contracts (e.g., Bridge and wrapped ERC721) use the same percentage denominator (e.g., `0.001 ether` vs `0.01 ether` per 1%)
+- Whether ERC1155 batch royalties multiply `royaltyAmount * quantity` and send the full result to the receiver (not just `royaltyAmount`)
+- Whether combined protocol + creator BPS can exceed 10 000 (100%), breaking sales
+- Whether the royalty receiver can be `address(0)`, causing silent loss of royalties
+```solidity
+// BAD — treats returned amount as a percentage
+(address receiver, uint256 royaltyAmount) = token.royaltyInfo(id, salePrice);
+uint256 fee = salePrice * royaltyAmount / 10_000; // royaltyAmount IS already the fee
+
+// GOOD
+(address receiver, uint256 royaltyAmount) = token.royaltyInfo(id, salePrice);
+// royaltyAmount is ready to send directly
+```
+
+### Case 13: Auction / settlement bricked by malicious `onERC721Received`
+A winning bidder or recipient that is a contract can revert or return an invalid value from `onERC721Received`, permanently blocking `safeTransferFrom`-based settlement. Check:
+- Whether `_settleAuction`, `settleContract`, or any end-of-auction function sends the NFT via `safeTransferFrom` to an arbitrary winner address
+- Whether the winner or liquidation recipient can be a contract with a custom, reverting `onERC721Received`
+- Whether there is a fallback to `transferFrom` (skipping the callback) or a pull-based withdrawal pattern
+- Whether liquidation of NFT collateral uses `safeTransferFrom` to the borrower/liquidator, enabling griefing
+```solidity
+// BAD — winner contract reverts onERC721Received, nobody can settle
+nft.safeTransferFrom(address(this), winner, tokenId);
+
+// GOOD — use transferFrom, or implement a pull-withdrawal pattern
+nft.transferFrom(address(this), winner, tokenId);
+```
+
+### Case 14: Unclaimed rewards lost when NFT position is transferred
+When an NFT represents a staking or liquidity position, accumulated rewards are often auto-claimed to the *new* owner instead of the previous one, or destroyed entirely. Check:
+- Whether transferring a position NFT triggers an auto-claim that sends pending rewards to the new owner rather than the transferring owner
+- Whether `burn`, `merge`, or `withdraw` flushes unclaimed rewards before destroying the token
+- Whether `_beforeTokenTransfer` / `_afterTokenTransfer` hooks settle rewards for the outgoing owner
+- Whether a veNFT `merge` operation settles both tokens' pending rewards before combining them
+- Whether staking/unstaking deletes the reward accounting struct before rewards are distributed
+
+### Case 15: Missing ownership check on NFT-consuming operations
+Functions that burn, lock, or use an NFT as input do not verify that `msg.sender` owns the token, allowing anyone to consume another user's NFT. Check:
+- Whether game/protocol actions (craft, quest, exercise, stake) call `ownerOf(tokenId) == msg.sender` before using the NFT
+- Whether an NFT option or derivative can be exercised by any caller, not just the owner
+- Whether cross-contract calls pass a `tokenId` supplied by the caller without re-checking ownership inside the called contract
+- Whether batch operations validate each token ID in the array belongs to the caller
+```solidity
+// BAD — anyone can exercise another user's option NFT
+function exercise(uint256 tokenId) external {
+    // no ownership check
+    _burn(tokenId);
+    payable(msg.sender).transfer(profit);
+}
+
+// GOOD
+require(ownerOf(tokenId) == msg.sender, "not owner");
+```
+
+### Case 16: Stuck ETH / tokens in mint contracts with no withdrawal
+Mint functions accept ETH payment but the contract has no `withdraw` function, permanently locking funds. Check:
+- Whether `mint` or `mintWithBudget` functions are `payable` and accumulate ETH without an admin withdrawal path
+- Whether excess ETH (overpayment above the mint price × quantity) is refunded to the caller
+- Whether fee-collection logic routes ETH to the contract address instead of a treasury EOA/multisig
+- Whether ERC20 payment tokens sent directly to the contract can be recovered
+
+### Case 17: NFT deposited / credited to wrong address via `onERC721Received`
+When a contract uses `onERC721Received` to register collateral or positions, it credits `operator` (the approved caller) instead of `from` (the actual token owner), misdirecting the collateral record. Check:
+- Whether `onERC721Received(operator, from, tokenId, data)` uses `from` (not `operator`) when recording the depositor
+- Whether a vault or lending pool that accepts NFTs via `safeTransferFrom` can have its position owned by a different address from the NFT's previous owner
+- Whether `depositPosition` uses `transferFrom` (missing the callback), so `onERC721Received` is never triggered, causing stuck NFTs
+```solidity
+// BAD — credits the approved operator, not the real owner
+function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata)
+    external returns (bytes4) {
+    positions[operator] = tokenId; // should be positions[from]
+    ...
+}
+```
+
+### Case 18: ERC721 / ERC1155 standard confusion in marketplace order matching
+Marketplace order-matching and transfer logic silently falls back to the wrong token standard, sending 1 ERC1155 token instead of the ordered quantity, or succeeding without any transfer when the standard is unrecognised. Check:
+- Whether order matching distinguishes `ERC721` from `ERC1155` using `supportsInterface` rather than user-supplied flags that can be manipulated
+- Whether ERC1155 transfer calls pass `order.amount` (not a hardcoded `1`) as the quantity
+- Whether `_transferNFTs` / `executeTokenTransfer` has a catch-all that silently succeeds when neither standard is matched
+- Whether a single token that implements both ERC721 and ERC1155 is handled deterministically
+```solidity
+// BAD — always transfers amount=1 for ERC1155
+function _transfer(address nft, address from, address to, uint256 id, uint256 amount) internal {
+    if (isERC721[nft]) IERC721(nft).transferFrom(from, to, id);
+    else IERC1155(nft).safeTransferFrom(from, to, id, 1, ""); // should be `amount`
+}
+```
+
+### Case 19: veNFT / governance NFT merge, split, or withdraw discards pending rewards
+Operations that combine or destroy governance NFTs (veNFT merge, split, checkpoint) fail to settle accrued rewards first, permanently losing yield for users. Check:
+- Whether `merge(tokenIdFrom, tokenIdTo)` claims all rewards from `tokenIdFrom` before burning it
+- Whether `withdraw` or `split` calls `getReward(tokenId)` / `claim(tokenId)` before destroying the token
+- Whether checkpoint creation during merge allows an attacker to reset another user's voting weight to zero by triggering duplicate timestamps
+- Whether `depositManaged` requires the caller to be the NFT owner, preventing third-party forced deposits
+
+### Case 20: Front-running NFT deposit to steal or misdirect tokens
+An attacker observes a pending `safeTransferFrom` or `offerPunkForSaleToAddress` and frontruns it to register themselves as the owner, stealing the deposited NFT or draining grouped funds. Check:
+- Whether non-standard transfer flows (e.g., CryptoPunks `offerForSaleToAddress` → `buyPunk`) can be front-run by a pool/vault registering the deposit to the attacker
+- Whether `mint` + `add()` bundled in one transaction can be split by a frontrunner who mints the same `tokenId` first
+- Whether `GroupBuy.purchase()` or similar crowd-pool functions accept a user-supplied `_market` address without validation, allowing the caller to redirect funds
+- Whether NFT bridge `bridgeNft()` functions verify the caller owns the token before initiating the cross-chain transfer
+
+### Case 21: Marketplace listing currency not validated
+Listings and offers accept an arbitrary `currency` field that is never checked against the contract's `acceptedCurrency`, enabling fee-evasion or incorrect accounting. Check:
+- Whether `ListingRequest.currency` and `OfferRequest.currency` are validated against the stored `acceptedCurrency` mapping before any funds move
+- Whether a listing created with a fake currency token can be filled, bypassing fee collection
+- Whether partial-fill bid fee accounting correctly subtracts unclaimed fees from reserve balances when `claimOrder` is called
+- Whether order-book contracts allow a market-only order's `remainShares` to reference shares that do not exist
+
+### Case 22: NFT staking reward accounting deleted before distribution
+Staking contracts delete the NFT accounting record (or reset the `account` struct) before transferring pending rewards, causing permanent reward loss. Check:
+- Whether `unstake` / `withdraw` calls the internal reward-distribution function *before* deleting `nftInfo[tokenId]` or burning the staking record
+- Whether routing unstake through a router contract causes rewards to be calculated for and sent to the router address rather than the original staker
+- Whether burn-mode reward multipliers are reset on every `claim()` call instead of being based on cumulative stake time
+- Whether `multiStakerClaim` in the same block can be called repeatedly because the epoch-claimed flag is set at the end of the function rather than the start
+
+### Case 23: Approval persistence in escrow / vault after NFT transfer
+ERC20 and ERC721 approvals granted to an escrow or vault contract persist after the underlying NFT is sold or transferred to a new owner, allowing the original approver to reclaim assets. Check:
+- Whether `setApprovalForAll` / `approve` granted to a vault or escrow contract is revoked when the vault NFT (representing ownership) is transferred
+- Whether a club, vault, or position NFT transfer clears all token approvals granted by the previous owner on assets held inside the escrow
+- Whether a previously time-locked NFT that is moved out and back into a vault re-inherits the old (still active) approval or timelock
+- Whether `transferERC721` inside a vault removes the internal approval record after executing the transfer

@@ -134,3 +134,127 @@ An attacker stakes a large amount immediately before rewards are distributed, ca
 - Whether time-weighted balances are used instead of spot balances for reward calculation
 - Whether reward vesting or cooldown periods prevent immediate withdrawal after claiming
 - Whether flash loans can be used to temporarily inflate staking balance during reward distribution
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 14: Reward accumulator not initialized for new stakers (historical rewards theft)
+When a user stakes into a pool that already has a non-zero `rewardPerTokenStored` (or `accRewardPerShare`), their `userRewardPerTokenPaid` must be set to the current accumulated value at entry time; otherwise they receive all rewards that accrued before they existed. Check:
+- Whether `_updateReward(user)` is called (and `userRewardPerTokenPaid[user]` set to `rewardPerTokenStored`) at the moment a new stake position is created
+- Whether `rewardDebt = user.amount * accRewardPerShare` is correctly assigned on first deposit, not left as zero
+- Whether a pool added mid-stream initializes each user's debt at the time of their first interaction, not at pool creation
+- Whether re-staking after a full withdrawal resets the debt to the current index rather than zero
+- Whether MasterChef-style contracts correctly set `rewardDebt` in the deposit path before any reward calculation
+```
+// BAD — new staker inherits all historical rewardPerToken
+function stake(uint256 amount) external {
+    _updateRewardPerToken();
+    balances[msg.sender] += amount;
+    // userRewardPerTokenPaid never set → earned() returns full history
+}
+
+// GOOD — debt initialized at entry
+function stake(uint256 amount) external {
+    _updateRewardPerToken();
+    rewards[msg.sender] = earned(msg.sender); // settle any prior (zero) amount
+    userRewardPerTokenPaid[msg.sender] = rewardPerTokenStored;
+    balances[msg.sender] += amount;
+}
+```
+
+### Case 15: Re-adding a removed reward token breaks per-user accounting
+When a reward token is removed and later re-added, the global `rewardPerTokenStored` for that token is reset to zero while individual `userRewardPerTokenPaid` mappings still hold the old (pre-removal) value. Users who deposited during the removal window get inflated or zero rewards on re-addition. Check:
+- Whether removing a reward token zeroes out the global accumulator but not each user's `userRewardPerTokenPaid`
+- Whether re-adding a token that previously existed resets `rewardPerTokenStored` to zero, causing negative or overflowing deltas for old users
+- Whether users who entered during the gap (when the token was absent) have their `userRewardPerTokenPaid` initialized correctly upon re-addition
+- Whether the protocol enforces that removed tokens can never be re-added, or handles the state migration explicitly
+
+### Case 16: Multiple `notifyRewardAmount` calls within a period override rather than accumulate the rate
+Some gauge/reward implementations recalculate `rewardRate = reward / rewardsDuration` on every call to `notifyRewardAmount`, overwriting the previous rate rather than carrying over the unspent balance. Remaining rewards from the current period are silently discarded. Check:
+- Whether `notifyRewardAmount` called a second time within an active period carries over `(periodFinish - block.timestamp) * rewardRate` into the new rate
+- Whether a second call resets `periodFinish = block.timestamp + duration`, effectively starting a fresh period and abandoning unclaimed emissions
+- Whether only privileged callers can invoke `notifyRewardAmount`, preventing permissionless dilution or override attacks
+- Whether the contract enforces `block.timestamp >= periodFinish` before allowing a new distribution period to start
+```
+// BAD — second call discards remaining rewards
+function notifyRewardAmount(uint256 reward) external onlyOwner {
+    rewardRate = reward / rewardsDuration;       // overwrites; prior remainder lost
+    periodFinish = block.timestamp + rewardsDuration;
+}
+
+// GOOD — carry over remaining rewards
+function notifyRewardAmount(uint256 reward) external onlyOwner {
+    uint256 leftover = block.timestamp < periodFinish
+        ? (periodFinish - block.timestamp) * rewardRate : 0;
+    rewardRate = (reward + leftover) / rewardsDuration;
+    periodFinish = block.timestamp + rewardsDuration;
+}
+```
+
+### Case 17: Gauge / pool kill wipes accumulated claimable rewards
+Administrative functions that deactivate or kill a gauge (e.g., `killGauge`, `emergencyShutdown`) zero out the `claimable` mapping or reward state before users have withdrawn, permanently destroying already-earned rewards. Check:
+- Whether `killGauge` or equivalent distributes or snapshots pending rewards to all users before zeroing state
+- Whether `reviveGauge` restores the reward state that was zeroed, or starts fresh (leaving a gap)
+- Whether emergency withdrawal functions skip the reward settlement step, forfeiting accrued but unclaimed rewards
+- Whether the kill/shutdown path at minimum transfers pending rewards to a recoverable escrow rather than discarding them
+- Whether users are given a grace period to claim after deactivation before state is wiped
+
+### Case 18: Rewards continue accruing past `periodFinish` (unbounded accrual)
+If `rewardPerToken()` uses `block.timestamp` directly instead of `min(block.timestamp, periodFinish)`, rewards keep accruing after the distribution window closes. Late claimers receive more than their entitled share, draining the reward pool. Check:
+- Whether `lastTimeRewardApplicable()` (or equivalent) returns `min(block.timestamp, periodFinish)` rather than `block.timestamp`
+- Whether `rewardPerToken()` and `earned()` both correctly cap time at `periodFinish`
+- Whether any path updates `lastUpdateTime` to a value beyond `periodFinish`, causing future calculations to compute a negative or zero time delta and miss legitimate rewards
+- Whether epoch-based systems cap reward calculations at the epoch boundary, not the current block
+```
+// BAD — accrues past period end
+function rewardPerToken() public view returns (uint256) {
+    return rewardPerTokenStored +
+        (block.timestamp - lastUpdateTime) * rewardRate * 1e18 / totalSupply;
+}
+
+// GOOD — capped at periodFinish
+function lastTimeRewardApplicable() public view returns (uint256) {
+    return block.timestamp < periodFinish ? block.timestamp : periodFinish;
+}
+function rewardPerToken() public view returns (uint256) {
+    return rewardPerTokenStored +
+        (lastTimeRewardApplicable() - lastUpdateTime) * rewardRate * 1e18 / totalSupply;
+}
+```
+
+### Case 19: Precision loss / rounding to zero with low-decimal reward tokens
+When a reward token has fewer than 18 decimals (e.g., USDC with 6), the reward-per-token accumulator can permanently round to zero because `rewardRate * elapsed < totalStaked`, leaving the numerator smaller than the denominator. All stakers receive zero rewards. Check:
+- Whether reward-per-token calculations scale the numerator by a sufficient precision factor (e.g., `1e18` or `10 ** rewardToken.decimals()`) before dividing by `totalStaked`
+- Whether `rewardRate` itself rounds to zero when `reward / duration` is computed with a low-decimal token and a long duration
+- Whether the protocol validates that `rewardRate > 0` after computing it in `notifyRewardAmount`
+- Whether `rewardPerTokenStored` uses a fixed 1e18 scaling regardless of reward token decimals, and correctly unscales when computing the final payout
+- Whether a short distribution window is enforced to keep per-second rates above the rounding threshold
+
+### Case 20: Rewards accumulated during zero-supply window credited to first staker
+When `totalSupply == 0` and rewards continue to flow (e.g., via a continuously incrementing index), some implementations do not skip the index update — they accumulate the full reward into `rewardPerTokenStored`. The next user to stake receives all of that historical accrual as instant profit. Check:
+- Whether the reward index is advanced when `totalSupply == 0` (if so, those rewards become immediately claimable by the first staker)
+- Whether the first staker's `userRewardPerTokenPaid` is set to the current index *after* any zero-supply accrual, not before
+- Whether the protocol uses a "virtual supply" or minimum deposit to prevent the zero-supply window
+- Whether rewards emitted during the zero-supply window are sent to a separate treasury rather than left in the accumulator
+```
+// BAD — first staker claims zero-supply accrual
+function updateIndex() internal {
+    // totalSupply was 0 for N blocks, index advanced:
+    rewardPerTokenStored += rewardRate * elapsed / totalSupply; // division by zero skipped? no — still accrued
+}
+// GOOD — skip when totalSupply == 0, OR set userRewardPerTokenPaid = current at stake time
+```
+
+### Case 21: Reward rate / parameter change without prior accrual snapshot
+When an admin changes the reward rate, emission speed, or reward duration, the contract must first settle all outstanding rewards at the old rate. If it skips this step, the new rate applies retroactively to already-elapsed time, either over- or under-paying all users. Check:
+- Whether `updateReward()` / `_updateRewardPerToken()` is called at the top of any admin function that modifies `rewardRate`, `rewardsDuration`, or per-pool emission weights
+- Whether changing `rewardRate` mid-period re-uses `lastUpdateTime` from before the change, causing the new rate to cover time that should have been calculated at the old rate
+- Whether admin functions that change allocation percentages (e.g., gauge weights, pool points) settle each pool's rewards before redistributing
+- Whether the contract stores a checkpoint of `(lastUpdateTime, rewardPerTokenStored)` before applying parameter changes
+
+### Case 22: First-depositor `rewardPerToken` inflation via 1-wei stake
+In reward pools that start empty, an attacker can stake 1 wei to become the sole staker during an early reward accumulation window, inflating `rewardPerTokenStored` to an enormous value. Subsequent stakers may receive zero rewards or the contract becomes insolvent. Check:
+- Whether the reward calculation `rewardPerToken = rewardRate * elapsed * PRECISION / totalSupply` can produce astronomically large values when `totalSupply == 1`
+- Whether a minimum deposit amount or initial virtual supply prevents the 1-wei attack
+- Whether the protocol uses OpenZeppelin's virtual shares / dead shares pattern for ERC4626-style reward vaults
+- Whether `rewardPerTokenStored` is stored in a type that can safely hold the inflated value, or overflows and wraps around
+- Whether donations of reward tokens directly to the contract (without going through `notifyRewardAmount`) can separately inflate the per-token rate

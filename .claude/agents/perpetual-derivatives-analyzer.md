@@ -195,3 +195,159 @@ For options protocols (calls, puts, exotic derivatives). Check:
 - Whether expired options are properly settled (auto-exercise for in-the-money options)
 - Whether the option writer's collateral is correctly locked until expiry or exercise
 - Whether exercise of cash-settled options correctly calculates the payout amount
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 16: Stale or zero mark price accepted without validation
+Mark price used for margin checks, liquidations, and PnL can be zero or pulled from an arbitrarily old price signature, silently corrupting all downstream calculations. Check:
+- Whether the mark price return value is validated to be non-zero before it is used in any margin, PnL, or liquidation computation
+- Whether price signature timestamps have both a maximum age (freshness) AND a minimum age check (not re-using an old sig)
+- Whether oracle validity flags (e.g. `isInvalid` from external perpetual markets) are checked with `&&` (both must be valid) rather than `||`
+- Whether functions that call `getMarkPrice()` (or equivalent) each independently validate the result rather than assuming the caller already checked
+- Whether liquidation keepers can supply an arbitrary historical price that was valid at some past time to trigger or prevent liquidations
+```solidity
+// BAD — zero mark price propagates silently
+uint256 markPrice = exchange.getMarkPrice(); // could return 0
+int256 pnl = int256(markPrice - entryPrice) * int256(size);
+
+// GOOD — validate before use
+uint256 markPrice = exchange.getMarkPrice();
+require(markPrice > 0, "invalid mark price");
+(bool isInvalid, uint256 spotPrice) = perpMarket.remainingMargin();
+require(!isInvalid && spotPrice > 0, "invalid spot");
+```
+
+### Case 17: Fill price used instead of mark price during order settlement margin check
+When settling a limit/market order, the margin requirement must be evaluated at the current mark price, not the order's fill price. Using fill price allows under-collateralised positions to pass margin checks. Check:
+- Whether `getAccountMarginRequirementUsd` (or equivalent) receives the keeper-supplied fill price rather than the current mark price when validating margin post-fill
+- Whether the mark price used for post-trade margin validation is fetched fresh rather than taken from the order struct
+- Whether TWAP interval used for mark price queries matches documented specs (e.g. 15-minute TWAP vs 15-second TWAP)
+- Whether debt-value calculations for liquidation eligibility include unsettled/unrealised PnL in addition to settled balances
+```solidity
+// BAD — margin check uses order fill price, not current mark price
+uint256 fillPrice = order.price;
+require(_isMarginSufficient(account, fillPrice), "insufficient margin");
+
+// GOOD — always use current mark price for margin validation
+uint256 currentMarkPrice = _getMarkPrice(marketId);
+require(_isMarginSufficient(account, currentMarkPrice), "insufficient margin");
+```
+
+### Case 18: Open interest sign error on position close (adding instead of subtracting)
+A recurring implementation error sets `nextOpenInterest` or computes price impact using the wrong direction for the closing side, inflating OI and corrupting funding rate and skew calculations. Check:
+- Whether the closing leg of a trade subtracts the position's notional from open interest (not adds it)
+- Whether `nextLongOpenInterest` and `nextShortOpenInterest` are assigned to the correct side when computing price impact for a close
+- Whether open interest is tracked per position and the stored amount (not the current size) is used on close, to handle partial closes correctly
+- Whether limit order execution uses post-fee margin when updating OI (not pre-fee margin)
+- Whether OI is double-counted when a position is increased multiple times and then closed
+```solidity
+// BAD — adds OI on close instead of subtracting
+nextLongOI = currentLongOI + tradeSizeUsd;   // wrong for a long close
+
+// GOOD
+nextLongOI = currentLongOI - tradeSizeUsd;   // correct: closing reduces OI
+```
+
+### Case 19: Protocol fees skipped or halved when position PnL is positive
+Several protocols have a code path where, if the trader's net PnL is positive after fill, the fee deduction step is skipped entirely or the fee is divided twice, allowing profitable traders to avoid paying fees. Check:
+- Whether the fee payment path is conditional on PnL sign (fees should always be deducted regardless of PnL direction)
+- Whether partially closing a position correctly computes fees on the closed notional (not the full position)
+- Whether settled fees for a partial close are divided once (not twice) before being applied
+- Whether `cross available value` used to gate new position opens deducts all pending fees including position fees
+- Whether filling an order that results in dust PnL causes the fee collection loop to exit early, leaving fees uncollected
+```solidity
+// BAD — fee collection gated on positive PnL
+if (pnl > 0) {
+    _collectFee(account, fee); // never runs when pnl <= 0
+}
+_settle(account, pnl);
+
+// GOOD — always collect fee before settling PnL
+_collectFee(account, fee);
+_settle(account, pnl);
+```
+
+### Case 20: Admin funding-rate parameter change causes retroactive time-travel in accrual
+When the protocol owner can update `fundingDuration`, `fundingPeriod`, or similar parameters, the change is applied to the entire un-checkpointed accrual window, retroactively altering funding owed by all open positions. Check:
+- Whether funding is checkpointed (settled for all positions) before any funding-rate parameter is modified
+- Whether `nextFundingPaymentTimestamp()` or epoch-boundary timestamps are recalculated correctly after a duration change (should not jump backward or skip intervals)
+- Whether the cumulative funding index update always adds to the previous value rather than always adding to zero (initialisation bug)
+- Whether increasing the funding period effectively zeroes out accrued funding for the current interval
+```solidity
+// BAD — changing duration retroactively shifts epoch boundary
+function setFundingDuration(uint256 newDuration) external onlyOwner {
+    fundingDuration = newDuration; // shifts nextFundingPaymentTimestamp for current interval
+}
+
+// GOOD — settle funding first, then update
+function setFundingDuration(uint256 newDuration) external onlyOwner {
+    _settleFunding(); // checkpoint all open positions
+    fundingDuration = newDuration;
+    lastFundingUpdate = block.timestamp; // reset epoch start
+}
+```
+
+### Case 21: ADL lacks slippage protection and stale candidate re-validation
+Auto-deleveraging operations are submitted asynchronously; by execution time the targeted position may no longer qualify, or market price may have moved enough to give the deleveraged trader far less than deserved. Check:
+- Whether ADL execution re-checks that the target position still meets the ADL ranking criteria at execution time (not just at submission time)
+- Whether ADL orders enforce a minimum output / slippage tolerance (otherwise unlimited slippage can drain the deleveraged trader)
+- Whether the ADL threshold comparison uses strict inequality (`>`) rather than `>=`, to avoid triggering ADL one wei too early
+- Whether a large block range between ADL candidate selection and execution can result in bad debt being socialised incorrectly
+- Whether ADL can be triggered on a position that the trader has already partially or fully closed between submission and execution
+
+### Case 22: Epoch-boundary front-running via unrealized PnL
+Protocols that apply unrealized PnL at epoch start/end allow attackers to deposit just before a profitable epoch close and withdraw immediately after, or to avoid losses by withdrawing just before a loss epoch is applied. Check:
+- Whether vault share price or user PnL is snapshot at a fixed point that cannot be front-run (e.g. TWAP or delayed application)
+- Whether `updateAccPnlPerTokenUsed()` (or equivalent) applies both positive and negative unrealized PnL symmetrically, not only gains
+- Whether unrealized PnL is averaged over the epoch or applied at the final moment (averaging can be gamed by late depositors)
+- Whether deposit and redemption requests made within the same epoch as a large PnL event are excluded from that epoch's settlement
+- Whether the vault's share price reflects all unrealized losses before allowing new deposits, preventing dilution of existing LPs
+
+### Case 23: Unrealized PnL inflation via zero-price or manipulated limit order
+A trader controlling both sides of a trade (or exploiting a missing price floor) can open a position at price zero or an extreme price, creating arbitrarily large unrealized PnL that inflates available margin and allows over-leveraged withdrawals. Check:
+- Whether limit order `openedPrice` is validated to be within a reasonable band of the current mark/index price before being accepted
+- Whether a user can open a long at price 0 (or near-zero), creating unbounded positive unrealized PnL that is then counted as available margin
+- Whether the sum of unrealized PnL across all positions is bounded by the actual collateral in the system
+- Whether `partyA`/`partyB` (or equivalent bilateral) setups allow self-dealing to inflate uPnL without real counterparty risk
+- Whether unrealized PnL used in margin checks is computed from mark price (manipulation-resistant) rather than last-trade price
+```solidity
+// BAD — no price validation; openedPrice of 0 creates infinite uPnL
+function openPosition(uint256 openedPrice, uint256 size) external {
+    positions[msg.sender] = Position(openedPrice, size);
+}
+
+// GOOD — enforce price is within tolerance of current mark price
+function openPosition(uint256 openedPrice, uint256 size) external {
+    uint256 mark = _getMarkPrice();
+    require(openedPrice >= mark * (BPS - MAX_SLIPPAGE_BPS) / BPS, "price too low");
+    positions[msg.sender] = Position(openedPrice, size);
+}
+```
+
+### Case 24: Leverage decrease incorrectly releases margin backing unrealized losses
+When a user decreases leverage on a position with unrealized losses, the protocol should increase the required margin. A recurring bug refunds the excess margin as if the position were profitable, letting the user withdraw collateral that is needed to cover the loss. Check:
+- Whether the `settleNewLeverage` (or equivalent) function accounts for unrealized PnL when computing the new required margin — not just the notional size
+- Whether `newRequiredMargin = positionSize / newLeverage` correctly adds back the unrealized loss (negative PnL must reduce available margin, not be ignored)
+- Whether changing leverage triggers a health check at the new leverage level before releasing any collateral
+- Whether the function correctly handles the case where unrealized loss exceeds the released margin (should revert or deduct, not send funds to the user)
+```solidity
+// BAD — ignores unrealized loss when releasing margin
+uint256 newRequired = positionSize / newLeverage;
+uint256 excess = currentMargin - newRequired;
+_transferOut(user, excess); // sends funds even if unrealizedPnL is deeply negative
+
+// GOOD — account for unrealized PnL before releasing
+int256 effectiveMargin = int256(currentMargin) + unrealizedPnL(user);
+int256 newRequired = int256(positionSize / newLeverage);
+require(effectiveMargin > newRequired, "insufficient margin after relever");
+uint256 releasable = uint256(effectiveMargin - newRequired);
+_transferOut(user, releasable);
+```
+
+### Case 25: Partial position close miscounts or double-applies fees
+When only a fraction of a position is closed, fees should be computed on the closed fraction only. Multiple protocols either apply the full-position fee or divide the per-close fee twice, causing either over-collection (griefing) or under-collection (protocol loss). Check:
+- Whether the fee for a partial close is proportional to `closedSize / totalSize` rather than applied to the full position
+- Whether `settledFee` is divided by `closedSize` before being recorded — doing so a second time in downstream logic causes a double-division
+- Whether the `maxWinPercent` (or equivalent cap) check on close PnL is applied per-close rather than per full position, and whether it can be bypassed by splitting one large close into many small ones
+- Whether partially closing and re-opening (via multiple small decreases) allows a user to cumulatively extract more than `maxWinPercent` of their position value
+- Whether fee rounding on partial closes accumulates dust that is never collected, allowing a griever to open/close tiny positions fee-free

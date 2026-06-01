@@ -45,6 +45,7 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 | [reentrancy-analyzer.md](../../agents/reentrancy-analyzer.md) | All forms of reentrancy: single-function, cross-function, cross-contract, read-only, and ERC token callback reentrancy (ERC721/ERC777/ERC1155). |
 | [access-control-analyzer.md](../../agents/access-control-analyzer.md) | Missing or broken access control, unauthorized function calls, unprotected initializers, privilege escalation, and RBAC misconfigurations. |
+| [centralization-privilege-analyzer.md](../../agents/centralization-privilege-analyzer.md) | Centralization and trusted-role risk: arbitrary parameter changes, unbounded fee/rate/mint powers, direct access to user funds, address re-pointing, single points of failure, and missing timelocks or bounds on privileged actions. |
 | [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) | Liquidation mechanism security in lending protocols, perpetuals, CDPs: blocked liquidations, bad debt, self-liquidation, and incentive manipulation. |
 | [lending-protocol-analyzer.md](../../agents/lending-protocol-analyzer.md) | Lending/borrowing mechanics: interest accrual ordering, rate model errors, debt index accounting, borrow/repay bugs, supply/borrow cap bypass, health factor gaps, and reserve fee accounting. |
 | [dos-analyzer.md](../../agents/dos-analyzer.md) | Denial-of-service vectors: unbounded loops, gas griefing, block gas limit issues, external call failures, state bloat, and blacklist blocking. |
@@ -56,15 +57,19 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 | [token-compatibility-analyzer.md](../../agents/token-compatibility-analyzer.md) | ERC20 edge cases: fee-on-transfer, rebasing, ERC777 hooks, non-standard returns (USDT), blacklistable tokens, approval race conditions, and pausable tokens. |
 | [governance-analyzer.md](../../agents/governance-analyzer.md) | Governance and voting security: flash loan voting, double voting, proposal griefing, delegation manipulation, quorum bypass, and timelock issues. |
 | [donation-attack-analyzer.md](../../agents/donation-attack-analyzer.md) | Share inflation and donation attacks: first-depositor exploits, ERC4626 inflation, exchange rate manipulation, and dead shares/virtual offset protection. |
+| [vault-share-accounting-analyzer.md](../../agents/vault-share-accounting-analyzer.md) | ERC4626 and custom vault share accounting: totalAssets/share-price correctness, convertTo/preview rounding direction, deposit/withdraw share math, exchange-rate manipulation, and pause/cap/cooldown edge cases. |
 | [reward-accounting-analyzer.md](../../agents/reward-accounting-analyzer.md) | Reward distribution and staking: double claiming, lost rewards on unstake, reward dilution, rate manipulation, accumulator overflow, and interest accrual. |
+| [merkle-airdrop-claims-analyzer.md](../../agents/merkle-airdrop-claims-analyzer.md) | Merkle-proof airdrops and claims: double claims, proof replay across roots/chains, missing leaf binding, zero/uninitialized roots, root-update handling, and unclaimed-fund recovery. |
 | [lock-funds-analyzer.md](../../agents/lock-funds-analyzer.md) | Stuck/locked funds: missing withdrawal paths, ETH stuck in contract, missing emergency withdraw, blacklisted address funds, and rounding dust. |
 | [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) | Fee logic security: fee bypass vectors, double charges, missing collection, incorrect distribution, timing manipulation, and denominator mismatches. |
 | [eth-native-handler-analyzer.md](../../agents/eth-native-handler-analyzer.md) | ETH/native token handling: msg.value reuse in multicall, missing refunds, forced ETH via selfdestruct, WETH wrap/unwrap, and failed transfer blocking. |
 | [state-management-analyzer.md](../../agents/state-management-analyzer.md) | State consistency: stale state after external calls, missing updates, storage deletion orphans, cross-contract desync, array/mapping corruption, cache invalidation, and pause mechanism gaps. |
 | [data-validation-analyzer.md](../../agents/data-validation-analyzer.md) | Input validation: zero-address checks, unchecked return values, off-by-one errors, ABI encoding issues, bounds validation, decimal handling, unsafe type casting, and encodePacked hash collisions. |
+| [timestamp-time-dependence-analyzer.md](../../agents/timestamp-time-dependence-analyzer.md) | Timestamp and time-dependence: block.timestamp/block.number reliance, hardcoded block-time assumptions across chains, epoch/boundary math, deadlines, cooldowns, and accrual-interval errors. |
 | [amm-dex-analyzer.md](../../agents/amm-dex-analyzer.md) | AMM/DEX security: pool initialization, swap slippage, liquidity manipulation, concentrated liquidity ticks, fee collection, routing validation, Uniswap V4 hooks, and LP token valuation. |
 | [perpetual-derivatives-analyzer.md](../../agents/perpetual-derivatives-analyzer.md) | Perpetual/derivatives security: funding rate accrual, margin calculations, open interest tracking, PnL settlement, order execution, mark price manipulation, ADL, and options settlement. |
 | [liquid-staking-restaking-analyzer.md](../../agents/liquid-staking-restaking-analyzer.md) | Liquid staking and restaking security: withdrawal queue manipulation, validator lifecycle, operator/AVS delegation, slashing accounting, exchange rate protection, beacon chain proofs, and multi-LST vault composition. |
+| [withdrawal-queue-redemption-analyzer.md](../../agents/withdrawal-queue-redemption-analyzer.md) | Withdrawal queues and redemptions: queue/epoch accounting, request ordering, claim-at-wrong-price, partial fulfillment, queue griefing/DoS, and stuck redemption requests. |
 | [vesting-streaming-analyzer.md](../../agents/vesting-streaming-analyzer.md) | Vesting and streaming security: release rate math, claim drainage, vesting transfers, cliff bypass, revocation accounting, stream cancellation, rebasing token vesting, and migration formula errors. |
 | [auction-mechanism-analyzer.md](../../agents/auction-mechanism-analyzer.md) | Auction mechanism security: Dutch auction price decay, zero-amount purchases, bid cancellation/sniping, settlement errors, bidder griefing, escrow management, collateral auctions, and reserve price enforcement. |
 
@@ -77,7 +82,7 @@ Spawn the selected **( only the strictly selected, not all of them )** subagents
 2. For the subagents with reported issues:
     1. Each subagent must explain step by step every issue found by him.
     2. Each subagent must provide clear details of the vulnerability and the attack path.
-    3. If any of the subagents doesn't complete both steps 4.1. and 4.2. with pure confidence then spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. Based on different criterias his job is to exclude vulnerabilities from the report list.
+    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. Based on different criterias this agent's job is to exclude vulnerabilities from the report list.
 
 The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
@@ -88,8 +93,8 @@ The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This
     - Medium — e.g. impactful issues, but extremely rare to happen; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds )
     - High — e.g. oracle manipulations; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
     - Critical — in general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
-2. Order the issues by impact — Critical is first, High is after critical, etc.
-3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.    
+2. Order the issues by impact — Critical is first, High is after Critical, etc.
+3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.
 
 ### Step 6 — Output report
 1. Output the final clean vulnerability report list in a bordered table with the following structure:

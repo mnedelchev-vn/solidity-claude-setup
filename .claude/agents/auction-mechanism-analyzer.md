@@ -184,3 +184,138 @@ function buy(uint256 amount) external {
     USDC.transferFrom(msg.sender, address(this), cost);
 }
 ```
+
+<!-- June 2026 Solodit enrichment -->
+
+### Case 14: Auction parameters mutable during live auction
+Admin or owner functions that change auction parameters (duration, price decay rate, multiplier, decrement, reserve price) take effect immediately, including on already-running auctions. Check:
+- Whether `setAuctionDuration`, `setDecayRate`, `setAuctionMultiplier`, `setAuctionDecrement`, or similar setters apply to ongoing auctions
+- Whether parameter changes can make `settleAuction` revert (e.g., setting decrement to 0 causes division by zero)
+- Whether a malicious owner can reduce `auctionMultiplier` to near-zero to drain basket funds at settlement
+- Whether bidders have any on-chain guarantee that the parameters they committed to cannot change before settlement
+- Whether a timelock or snapshot of parameters at auction start is used
+```
+// BAD — live parameter change affects ongoing auction
+function setAuctionDecrement(uint256 _decrement) external onlyOwner {
+    auctionDecrement = _decrement; // if set to 0, settleAuction() divides by zero
+}
+
+// GOOD — snapshot parameters at auction creation
+function _startAuction() internal {
+    currentAuction.decrement = auctionDecrement; // immutable for this auction's lifetime
+    currentAuction.multiplier = auctionMultiplier;
+}
+```
+
+### Case 15: Sealed-bid auction reveals are not truly sealed
+Sealed/blind auctions where bids are encrypted with the seller's public key allow the seller to decrypt all bids before the reveal phase and selectively abandon the auction if bids are unsatisfactory. Check:
+- Whether the seller (or any privileged party) possesses the decryption key for bids before reveal
+- Whether the seller can cancel or not finalize the auction after reading all bids
+- Whether commit-reveal schemes use a bidder-controlled secret rather than a seller-controlled key
+- Whether unrevealed bids are correctly refunded when an auction is cancelled (check that the right array index is used — a common off-by-one is using `sortedOffers` instead of `unrevealedOffers`)
+- Whether the private key for an EMPAM-style auction can simply never be submitted, permanently locking bidder funds
+
+### Case 16: claimAuction / settlement push-loop DoS
+When `claimAuction` or settlement iterates over all bidders and pushes tokens/ETH to each in a loop, a single malicious bidder whose `receive()` or `onERC721Received` reverts blocks all subsequent claimants. Check:
+- Whether settlement or claim functions loop over an unbounded bidder array with direct transfers
+- Whether a gas limit can be exceeded by a large number of bids (>200), permanently preventing settlement
+- Whether a winner can revert on token receipt, locking all other bidders' funds indefinitely
+- Whether a pull-withdrawal pattern is used so each bidder claims independently
+```
+// BAD — single reverting recipient blocks all remaining bidders
+function claimAuction() external {
+    for (uint i = 0; i < bids.length; i++) {
+        token.transfer(bids[i].bidder, bids[i].amount); // reverts = everything locked
+    }
+}
+
+// GOOD — pull pattern
+mapping(address => uint256) public claimable;
+function claimAuction() external {
+    for (uint i = 0; i < bids.length; i++) {
+        claimable[bids[i].bidder] += bids[i].amount;
+    }
+}
+```
+
+### Case 17: Unsold auction tokens permanently locked on zero-bid ending
+When an auction concludes with no bids, the protocol-owned auction tokens have no recovery path. Check:
+- Whether the `auctionEnd` or equivalent function sends unsold tokens back to the correct owner (not a factory contract that has no withdrawal function)
+- Whether a `recoverToken` or similar admin function exists and correctly updates auction state when called
+- Whether the `_totalAuctionTokenAllocation` accounting variable is reset when the last auction config is removed
+- Whether a `startAuction` called immediately after a no-bid conclusion can be blocked by stale state
+- Whether zero-bid Dutch auctions that reach the reserve floor are cancelled and collateral returned
+
+### Case 18: Auction cancellation does not refund the current highest bidder
+When an auction is cancelled (by admin, by refinancing, or by the auction creator), the current highest bid is silently lost rather than returned. Check:
+- Whether the auction cancellation path explicitly refunds the current `highestBidder`
+- Whether cancellation mid-auction is even allowed once bids exist (it should require refunding all bidders first)
+- Whether a borrower can use a refinance or loan modification to cancel an active liquidation auction, recovering collateral without repaying
+- Whether the initiator fee is calculated on the full reserve price instead of only the portion actually paid, over-charging on cancellation
+```
+// BAD — cancellation burns highest bid
+function cancelAuction(uint256 auctionId) external onlyOwner {
+    delete auctions[auctionId]; // highestBid is gone, bidder never refunded
+}
+
+// GOOD
+function cancelAuction(uint256 auctionId) external onlyOwner {
+    Auction storage a = auctions[auctionId];
+    if (a.highestBidder != address(0)) {
+        pendingRefunds[a.highestBidder] += a.highestBid;
+    }
+    delete auctions[auctionId];
+}
+```
+
+### Case 19: Self-bidding / auction owner bidding on their own auction
+Allowing the auction creator or NFT owner to place bids on their own auction lets them inflate apparent demand, shill-bid to push price above legitimate offers, or exploit mechanics that treat them as a winner. Check:
+- Whether `placeBid` checks `msg.sender != auction.seller` (or equivalent)
+- Whether the check can be bypassed by using a secondary address or a contract the seller controls
+- Whether winning a self-bid results in a no-op transfer that unlocks collateral without genuine payment
+- Whether the self-bid can be used to trigger payout mechanics that send protocol fees to the seller
+
+### Case 20: try-catch on mint/transfer only catches string errors, enabling forced pause
+`_createAuction` functions often wrap `token.mint()` in a `try/catch (Error(string memory))` block. This only catches `require`-style string reverts; custom errors and out-of-gas panics fall through and propagate, pausing or bricking the auction house. Check:
+- Whether the try-catch uses `catch (Error(string memory))` instead of the broader `catch {}`
+- Whether a malicious actor can craft an NFT or token that reverts with a custom error to trigger the catch fallback and pause the contract
+- Whether the paused state can only be unpaused by an admin, creating a persistent DoS
+- Whether non-string panics (e.g., array index out of bounds in `token.mint`) are silently swallowed or correctly handled
+```
+// BAD — custom errors bypass catch, propagate and trigger pause
+try token.mint(to, tokenId) {
+    ...
+} catch (Error(string memory)) {
+    _pause(); // only string errors caught; custom errors revert the whole tx
+}
+
+// GOOD — catch-all
+try token.mint(to, tokenId) {
+    ...
+} catch {
+    _pause();
+}
+```
+
+### Case 21: L2 sequencer downtime causes Dutch auction price to decay during outage
+On L2s, when the sequencer goes offline, `block.timestamp` does not advance for users but resumes from the offline point when it comes back. A Dutch auction started before the outage will have decayed significantly, letting the first transaction after resumption buy at an artificially low price. Check:
+- Whether the protocol deploys Dutch auctions on L2 chains (Arbitrum, Optimism, Base, etc.)
+- Whether a Chainlink sequencer uptime feed (or equivalent) is checked before accepting a price
+- Whether the auction is paused or restarted when a sequencer outage is detected
+- Whether an attacker can deliberately trigger short outages (e.g., block stuffing on short-duration auctions) to advance time without competition
+- Whether the auction duration is long enough that brief outages are not economically exploitable
+
+### Case 22: Stale or never-expiring bids enable theft after asset transfer
+Bid signatures or on-chain bids that have no expiry (or that the contract never invalidates on transfer) can be accepted long after the bidder's intent is stale, allowing a new asset owner to force-execute a sale at an old low price. Check:
+- Whether bids carry an expiry timestamp and whether it is enforced at settlement
+- Whether transferring the auctioned asset (NFT or collateral token) to a new address invalidates existing bids
+- Whether immediately-expiring bids (valid for 1 second) can replace a standing valid bid and then expire before settlement
+- Whether bid IDs are unique per (asset, round) and cannot be reused across different auction instances for the same asset
+- Whether an off-chain signature-based bid system nonces against the current owner address
+
+### Case 23: Auctioned collateral transferable after auction starts
+When a liquidation or NFT auction begins, the underlying collateral can still be transferred out or additional liens added, leaving the auction to settle against an empty or encumbered asset. Check:
+- Whether a `locked` or `inAuction` flag prevents the collateral owner from transferring the asset after `startAuction` is called
+- Whether new liens or borrows can be taken against collateral already in auction
+- Whether `mergeOrRemoveCollateral` or similar pool operations check that the collateral is not in an active auction
+- Whether a `createLien` call uses a collateralId from one source but checks auction status from another (allowing a spoofed params bypass)
