@@ -23,7 +23,7 @@ The following repo provides Claude Code skills purpose-built for Solidity securi
 
 - Global install _(skill available in all projects)_:
     ```
-    mkdir -p ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
+    mkdir -p ~/.claude/skills/smart-contract-analyzer && cp .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/references ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
     ```
 
 - Project-only install:

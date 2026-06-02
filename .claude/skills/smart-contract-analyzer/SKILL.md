@@ -29,7 +29,7 @@ At this step crawl the protocol smart contract(s):
 
 The crawling is a crucial step, because based on the crawling scanning you will decide which subagents to include in the Orchestration at Step 2. You need to have clear idea about each smart contract and it's logic & modules to be precise in the Orchestration routing step.
 
-### Step 2 — Orchestration routing
+### Step 2 — Build orchestration routing
 1. Take into account if command parameter `--exclude-subagents` has been applied — the selected subagents marked as excluded are out of scope. Skip if parameter not passed.
 2. Take into account command parameter `--raw-manual-context`. E.g. `--raw-manual-context "protocol won't use liquidations"` shall exclude the [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) from the scope. Skip if parameter not passed.
 3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. Spawning an subagent that doesn't make sense will end up spending more tokens and decreasing the LLM performance or another problem could be missing to spawn a relevant subagent — both scenarios are **CRITICAL**. Example:
@@ -73,26 +73,25 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 | [vesting-streaming-analyzer.md](../../agents/vesting-streaming-analyzer.md) | Vesting and streaming security: release rate math, claim drainage, vesting transfers, cliff bypass, revocation accounting, stream cancellation, rebasing token vesting, and migration formula errors. |
 | [auction-mechanism-analyzer.md](../../agents/auction-mechanism-analyzer.md) | Auction mechanism security: Dutch auction price decay, zero-amount purchases, bid cancellation/sniping, settlement errors, bidder griefing, escrow management, collateral auctions, and reserve price enforcement. |
 
-### Step 3 — Orchestration of security checks
+### Step 3 — Process the orchestration
 Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
 ### Step 4 — Report list legitimity check
-1. **IMPORTANT** - before proceeding with the legitimity check it must be clear that during Step 4.2. each subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not sure about some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
-
+1. **IMPORTANT** — before proceeding with the legitimity check of the report list it must be clear that during Step 4.2. each subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not sure about some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
 2. For the subagents with reported issues:
     1. Each subagent must explain step by step every issue found by him.
     2. Each subagent must provide clear details of the vulnerability and the attack path.
-    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then spawn the [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. Based on different criterias this agent's job is to exclude vulnerabilities from the report list.
+    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then remove the issue from the reported vulnerability list.
 
 The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 ### Step 5 — Vulnerabilities classification
-1. Use the following pattern as a guide to know how to classify the issues found in the vulnerability report list:
-    - Info — e.g. code cleanup; gas cost optimization; missing comments on crucial logic; typos, etc. ( no real impact on contracts funds )
-    - Low — e.g. missing events; floating pragma; zero address validations inside the constructor; anything that an user can enter as parameter and eventually damage only himself, etc. ( no real impact on contracts funds )
-    - Medium — e.g. impactful issues, but extremely rare to happen; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds )
-    - High — e.g. oracle manipulations; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
-    - Critical — in general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
+1. Use the following pattern as a guide to classify the issues found in the vulnerability report list:
+    - Info — no impact on funds or security. Code cleanup, gas optimization, missing NatSpec/comments, typos, floating pragma.
+    - Low — limited/situational, no real fund risk. Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence. Also: centralization risk WITHIN the documented trust model.
+    - Medium — e.g. impactful issues, but extremely rare to happen; break in CORE protocol functionality with no direct theft; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds ); oracle staleness under conditions; precision/rounding leaks; missing slippage.
+    - High — e.g. price/oracle manipulation that yields theft; accounting flaw allowing over-withdrawal; liquidation logic flaw; permanent fund freeze; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
+    - Critical — majority of user/protocol funds directly stealable or permanently locked, with no meaningful preconditions; attacker profits immediately. Examples: unprotected init/mint; arbitrary delegatecall; ownerless withdraw; full-vault reentrancy. In general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
 2. Order the issues by impact — Critical is first, High is after Critical, etc.
 3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.
 

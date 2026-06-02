@@ -44,12 +44,15 @@ The skill decides which subagent is to be called per codebase:
 
 Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only )_. Access to `Write` or `Edit` tools is denided.
 
-After the selected subagents are done analyzing there is one more subagent left to be spawned — [unbiased-analyzer.md](./references/local-agents/unbiased-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating them if they're really legit or if the defined severity/impact is correct. Based on some preconditions the subagent can decide to drop issues vulnerabilities report list or to downgrade them.
+After the selected subagents are done analyzing there is one more subagent left to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
+- remove duplicates if such are spotted _(often two separate impacts on a protocol have the same root cause)_
+- drop issues vulnerabilities report list if they're invalid
+- or to downgrade them if the initial classification is wrong
 
 ## Installation
 
 ```
-mkdir -p ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
+mkdir -p ~/.claude/skills/smart-contract-analyzer && cp .claude/skills/smart-contract-analyzer/SKILL.md ~/.claude/skills/smart-contract-analyzer && cp -R .claude/skills/smart-contract-analyzer/references ~/.claude/skills/smart-contract-analyzer && mkdir -p ~/.claude/agents && cp .claude/agents/* ~/.claude/agents
 ```
 
 ## Skill parameters:
