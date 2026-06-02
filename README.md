@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The following repo provides Claude Code skills purpose-built for Solidity security auditing and protocol research. The [smart-contract-analyzer](.claude/skills/smart-contract-analyzer/) skill crawls a codebase, intelligently selects which of its 27 specialized subagents are relevant to the code _(covering attack surfaces from reentrancy and flash loans to oracle manipulation and proxy upgrades)_, runs them in parallel, and produces a severity-classified vulnerability report with built-in false-positive filtering. The [solidity-protocol-context](.claude/skills/solidity-protocol-context/) skill reverse-engineers a protocol's architecture into structured context — actors, entry points, fund flows, fee collection logic, access control diagrams, and dependency maps. Both skills can be triggered automatically by the agent or invoked directly by terminal command, example:
+The following repo provides Claude Code skills purpose-built for Solidity security auditing and protocol research. The [smart-contract-analyzer](.claude/skills/smart-contract-analyzer/) skill crawls a codebase, intelligently selects which of its 32 specialized subagents are relevant to the code _(covering attack surfaces from reentrancy and flash loans to oracle manipulation and proxy upgrades)_, runs them in parallel, and produces a severity-classified vulnerability report with built-in false-positive filtering. The [solidity-protocol-context](.claude/skills/solidity-protocol-context/) skill reverse-engineers a protocol's architecture into structured context — actors, entry points, fund flows, fee collection logic, access control diagrams, and dependency maps. Both skills can be triggered automatically by the agent or invoked directly by terminal command, example:
 ```
 /smart-contract-analyzer contracts/
 ```
@@ -12,7 +12,7 @@ The following repo provides Claude Code skills purpose-built for Solidity securi
 
 | Skill title | Description |
 |----------------|-------------|
-| [smart-contract-analyzer](.claude/skills/smart-contract-analyzer/) | Parallel security audit across [27 specialized subagents](.claude/agents/), each one responsible for different groups of attack vectors |
+| [smart-contract-analyzer](.claude/skills/smart-contract-analyzer/) | Parallel security audit across [32 specialized subagents](.claude/agents/), each one responsible for different groups of attack vectors |
 | [solidity-protocol-context](.claude/skills/solidity-protocol-context/) | Protocol-level context extraction with diagrams and flow analysis |
 
 ## Prerequisites
