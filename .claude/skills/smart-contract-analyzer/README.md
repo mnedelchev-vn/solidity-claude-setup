@@ -59,6 +59,7 @@ mkdir -p ~/.claude/skills/smart-contract-analyzer && cp .claude/skills/smart-con
 
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration.
 - `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is **sonnet**.
+- `--OOS <list>`: Defines additional Out-of-scope smart contracts to not be part of the analyzing. The default Out-of-scope is defined at _Step 1 — Crawling_
 - `--raw-manual-context <context>`: This is anything that you would like to add as additional context about the particular codebase. e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"`. 
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project.
 
