@@ -42,12 +42,13 @@ The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
 - etc, etc.
 
-Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only )_. Access to `Write` or `Edit` tools is denided.
+> [!NOTE]  
+> Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only access )_. Access to `Write` or `Edit` tools is denied.
 
-After the selected subagents are done analyzing there is one more subagent left to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent. This subagent double check the issues collected in the vulnerabilities report list by validating if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
-- remove duplicates if such are spotted _(often two separate impacts on a protocol have the same root cause)_
-- drop issues vulnerabilities report list if they're invalid
-- or to downgrade them if the initial classification is wrong
+After the selected subagents by the orchestration routing step are done analyzing, there is one more subagent left to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double check the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
+- remove duplicates _(very often two separate impacts on a protocol have the same root cause)_
+- remove issues from the vulnerabilities report list if they're invalid
+- or to downgrade issues if the initial classification is wrong
 
 ## Installation
 
@@ -70,11 +71,14 @@ Trigger the skill directly with the following terminal command:
 
 ## Execution time
 
-The skill was triggered numerous on the Sherlock's [Clear Macro by Superfluid contest](https://audits.sherlock.xyz/contests/1263?filter=scope) and the results show that analyzing ~400 nSLOC takes roughly 6 minutes. Analyzing bigger scope with more lines of code or in general running the skill on more complex codebase will definitely increase the execution time.
+The skill was triggered numerous of times on the Sherlock's [Clear Macro by Superfluid contest](https://audits.sherlock.xyz/contests/1263?filter=scope) using _Opus 4.6_ and effort being set as middle value — the results show that analyzing ~400 nSLOC takes roughly 5 minutes. Reasons why the skill could take longer than expected time to execute:
+- analyzing bigger scope with more lines of code
+- running the skill on more complex codebase
+- running the skill on a complex model with high effort being set
 
 ## Advices
 
-1. By default agent's response is non deterministic meaning that same user prompt being sent multitple times doesn't necessarily mean that the response will be the same. Run the analyzer at least 3 times to get a compherensive report.
+1. By default agent's response is non deterministic meaning that the very same user prompt being sent multitple times doesn't necessarily mean that the response will always be the same. Run the analyzer at least 3 times to get a compherensive report.
 2. Tight scope — run the skill on not more than 5 to 10 smart contracts. Smaller and tighten scope means that each subagent will perform with cleaner context thus leading to better results.
 3. Providing manual context:
     - Manually adding parameter `--exclude-subagents` to the trigger command will offload the skill with the decision making in the orchestration routing
