@@ -78,16 +78,7 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 ### Step 3 — Process the orchestration
 Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
-### Step 4 — Report list legitimity check
-1. **IMPORTANT** — before proceeding with the legitimity check of the report list it must be clear that during Step 4.2. each subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not sure about some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
-2. For the subagents with reported issues:
-    1. Each subagent must explain step by step every issue found by him.
-    2. Each subagent must provide clear details of the vulnerability and the attack path.
-    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then remove the issue from the reported vulnerability list.
-
-The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
-
-### Step 5 — Vulnerabilities classification
+### Step 4 — Vulnerabilities classification
 1. Use the following pattern as a guide to classify the issues found in the vulnerability report list:
     - Info — no impact on funds or security. Code cleanup, gas optimization, missing NatSpec/comments, typos, floating pragma.
     - Low — limited/situational, no real fund risk. Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence. Also: centralization risk WITHIN the documented trust model.
@@ -96,6 +87,15 @@ The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This
     - Critical — majority of user/protocol funds directly stealable or permanently locked, with no meaningful preconditions; attacker profits immediately. Examples: unprotected init/mint; arbitrary delegatecall; ownerless withdraw; full-vault reentrancy. In general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
 2. Order the issues by impact — Critical is first, High is after Critical, etc.
 3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.
+
+### Step 5 — Report list legitimity check
+1. **IMPORTANT** — before proceeding with the legitimity check of the report list it must be clear that during Step 4.2. each subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not sure about some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
+2. For the subagents with reported issues:
+    1. Each subagent must explain step by step every issue found by him.
+    2. Each subagent must provide clear details of the vulnerability and the attack path.
+    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then remove the issue from the reported vulnerability list.
+
+The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 ### Step 6 — Output report
 1. Output the final clean vulnerability report list in a bordered table with the following structure:
