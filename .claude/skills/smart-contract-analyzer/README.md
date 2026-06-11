@@ -42,10 +42,12 @@ The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
 - etc, etc.
 
-After the selected subagents by the orchestration routing step are done analyzing, there is one more subagent left to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double check the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
+After the selected subagents by the orchestration routing step are done analyzing, there is another subagent to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double check the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
 - remove duplicates _(very often two separate impacts on a protocol have the same root cause)_
 - remove issues from the vulnerabilities report list if they're invalid
 - or to downgrade issues if the initial classification is wrong
+
+After the classification step have been executed, next in line is to perform a legitimacy check of the reported vulnerabilities list. For each one of the existing issues in the reported list there is spawn of dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagent meaning that if after the classification step there are 10 issues in the reported list then 10 separate independent subagents are going to be spawned. Each one of them with clear context window and questioning the legitimacy of the issues. The core reason of this step is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 > [!NOTE]  
 > Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only access )_. Access to `Write` or `Edit` tools is denied.

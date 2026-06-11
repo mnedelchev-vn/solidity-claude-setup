@@ -76,6 +76,8 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 | [auction-mechanism-analyzer.md](../../agents/auction-mechanism-analyzer.md) | Auction mechanism security: Dutch auction price decay, zero-amount purchases, bid cancellation/sniping, settlement errors, bidder griefing, escrow management, collateral auctions, and reserve price enforcement. |
 
 ### Step 3 — Process the orchestration
+**IMPORTANT** — it must be clear that during the execution of this step, every spawned subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not able to prove some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
+
 Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
 ### Step 4 — Vulnerabilities classification
@@ -88,14 +90,10 @@ Spawn the selected **( only the strictly selected, not all of them )** subagents
 2. Order the issues by impact — Critical is first, High is after Critical, etc.
 3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.
 
-### Step 5 — Report list legitimity check
-1. **IMPORTANT** — before proceeding with the legitimity check of the report list it must be clear that during Step 4.2. each subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not sure about some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
-2. For the subagents with reported issues:
-    1. Each subagent must explain step by step every issue found by him.
-    2. Each subagent must provide clear details of the vulnerability and the attack path.
-    3. If any of the subagents doesn't complete both steps 4.2.1. and 4.2.2. with pure confidence then remove the issue from the reported vulnerability list.
+### Step 5 — Report list legitimacy check
+After Step 4 has performed united and/or excluded during the classification, at Step 5 spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 4 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them should validate the legitimacy of the particular issue.
 
-The core reason of Step 4.2. is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+The core reason of Step 5 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 ### Step 6 — Output report
 1. Output the final clean vulnerability report list in a bordered table with the following structure:

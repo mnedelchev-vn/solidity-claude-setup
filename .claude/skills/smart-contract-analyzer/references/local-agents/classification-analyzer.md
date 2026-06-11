@@ -1,6 +1,6 @@
 ---
 name: classification-analyzer
-description: "This subagent is not meant to be called automatically by any agent on a random user prompt. It's supposed to be called called only per request of the /smart-contract-analyzer Claude Code skill."
+description: "This subagent is not meant to be called automatically by any agent on a random user prompt. It's supposed to be called called only per request by the /smart-contract-analyzer Claude Code skill."
 tools: Glob, Grep, Read, Bash
 color: cyan
 ---
@@ -11,7 +11,7 @@ The core goal is to support the main agent with correct classification of the vu
 ## Analysis checklist
 
 ### Step 1: Study the reported issues
-Perform a check on the findings — study all the issues in the reported list and their impacts.
+Examine on the findings — study all the issues in the reported list and their impacts.
 
 ### Step 2: Deduplicate the report list
 Deduplication should not rely entirely on keyword matching, but instead on identifying the underlying issue or the root cause:
@@ -65,5 +65,5 @@ Based on the following checklist perform two actions — exclude vulnerabilities
     - Yes -> Downgrade severity
 8. Is the reported issue an already accepted risk for the protocol? Check if this is the case in the NatSpec and the project's README files. Such example could be a withdraw method with slippage protection, but the slippage validation is being done before the withdraw fee deduction in result an user with `minAmount` slippage value of 1000 is going to receive 900 tokens if the fee is 10%. If the NatSpec has exlicitly mentioned that the `minAmount` protects only the gross withdrawn value then issue should be excluded from the reported list.
     - Yes -> Exclude
-    
+
 Provide a visible list in the prompt response of which reports have been excluded or downgraded. Only the reports that have been excluded or downgraded, not the full report list.
