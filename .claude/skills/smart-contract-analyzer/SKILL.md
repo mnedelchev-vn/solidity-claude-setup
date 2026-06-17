@@ -38,11 +38,13 @@ The crawling is a crucial step, because based on the crawling scanning you will 
     - A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
     - A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
     - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
+    - A codebase that contains no inline `assembly { ... }` blocks, Yul or Huff code doesn't have to be analyzed by the [yul-assembly-analyzer.md](../../agents/yul-assembly-analyzer.md) subagent
     - etc, etc.
 
 | Subagent | Description |
 |----------------|-------------|
 | [math-analyzer.md](../../agents/math-analyzer.md) | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagent aims to spot them. |
+| [yul-assembly-analyzer.md](../../agents/yul-assembly-analyzer.md) | Yul / inline-assembly specifics: bugs caused by assembly bypassing Solidity safety — div/mod-by-zero returning 0 instead of reverting, unchecked overflow, missing contract-existence checks before call/delegatecall/staticcall, unchecked call success, manual storage-slot derivation collisions, hand-rolled calldata decoding, out-of-bounds mload/calldataload, free-memory-pointer corruption, dirty-bit/masking/signextend errors, bit-packing/shift mistakes, truncating casts, CREATE2 address mismatches, and `stop()`/`return()` opcode misuse. |
 | [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 | [reentrancy-analyzer.md](../../agents/reentrancy-analyzer.md) | All forms of reentrancy: single-function, cross-function, cross-contract, read-only, and ERC token callback reentrancy (ERC721/ERC777/ERC1155). |
