@@ -1,9 +1,10 @@
 # Smart contract analyzer skill
 
-The purpose of this skill is to crawl a smart contract(s) and spot security issues. The skill is currently spawning 32 unique subagents _( Orchestration )_ covering 786 checklist cases across different groups of attack vectors:
+The purpose of this skill is to crawl a smart contract(s) and spot security issues. The skill is currently spawning 33 unique subagents _( Orchestration )_ covering 802 checklist cases across different groups of attack vectors:
 | Subagent | Cases covered | Description |
 |----------------|:---:|-------------|
 | [math-analyzer.md](../../agents/math-analyzer.md) | 38 | Solidity does not support float type which leads to a lot of issues with division and rounding and this subagent aims to spot them. |
+| [yul-assembly-analyzer.md](../../agents/yul-assembly-analyzer.md) | 16 | Yul / inline-assembly specifics: bugs caused by assembly bypassing Solidity safety — div/mod-by-zero returning 0 instead of reverting, unchecked overflow, missing contract-existence checks before call/delegatecall/staticcall, unchecked call success, manual storage-slot derivation collisions, hand-rolled calldata decoding, out-of-bounds mload/calldataload, free-memory-pointer corruption, dirty-bit/masking/signextend errors, bit-packing/shift mistakes, truncating casts, CREATE2 address mismatches, zkSync CREATE/CREATE2 semantics, and `stop()`/`return()` opcode misuse. |
 | [signature-verification-analyzer.md](../../agents/signature-verification-analyzer.md) | 30 | Covering different attack vectors with signatures on-chain verification such as signature replay, DoS, etc. |
 | [oracle-analyzer.md](../../agents/oracle-analyzer.md) | 46 | Covering Chainlink's and Pyth's potential issues during integration and fetching of price feed data. |
 | [reentrancy-analyzer.md](../../agents/reentrancy-analyzer.md) | 19 | All forms of reentrancy: single-function, cross-function, cross-contract, read-only, and ERC token callback reentrancy (ERC721/ERC777/ERC1155). |
