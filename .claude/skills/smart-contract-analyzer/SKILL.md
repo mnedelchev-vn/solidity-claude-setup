@@ -8,7 +8,7 @@ metadata:
 ---
 
 # Smart contract analyzer
-You're a Solidity smart contract analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts and then apply security checks with the help of subagents. After the vunlerability report from the subagents is done you will perform a false alarm check analysis which will help to prevent from reporting false positives.
+You're a Solidity smart contract analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts and then apply security checks with the help of subagents. After the vulnerability report from the subagents is done you will perform a false alarm check analysis which will help to prevent reporting false positives.
 
 ## Modes
 All of the command arguments listed below are off by default.
@@ -29,12 +29,12 @@ At this step crawl the protocol smart contract(s):
 - If the target is a particular `.sol` contract then focus entirely on that specific contract plus all the imported/inherited smart contract
 - If the target is a particular folder then crawl all the `.sol` contracts in this folder and the children folders
 
-The crawling is a crucial step, because based on the crawling scanning you will decide which subagents to include in the Orchestration at Step 2. You need to have clear idea about each smart contract and it's logic & modules to be precise in the Orchestration routing step.
+The crawling is a crucial step, because based on the crawling scanning you will decide which subagents to include in the Orchestration at Step 2. You need to have clear idea about each smart contract and its logic & modules to be precise in the Orchestration routing step.
 
 ### Step 2 — Build orchestration routing
 1. Take into account if command parameter `--exclude-subagents` has been applied — the selected subagents marked as excluded are out of scope. Skip if parameter not passed.
 2. Take into account command parameter `--raw-manual-context`. E.g. `--raw-manual-context "protocol won't use liquidations"` shall exclude the [liquidation-analyzer.md](../../agents/liquidation-analyzer.md) from the scope. Skip if parameter not passed.
-3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. Spawning an subagent that doesn't make sense will end up spending more tokens and decreasing the LLM performance or another problem could be missing to spawn a relevant subagent — both scenarios are **CRITICAL**. Example:
+3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. Spawning a subagent that doesn't make sense will end up spending more tokens and decreasing the LLM performance or another problem could be missing to spawn a relevant subagent — both scenarios are **CRITICAL**. Example:
     - A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
     - A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../agents/oracle-analyzer.md)
     - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
@@ -80,7 +80,7 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 ### Step 3 — Process the orchestration
 **IMPORTANT** — it must be clear that during the execution of this step, every spawned subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not able to prove some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
 
-Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individiaul checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
+Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individual checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
 ### Step 4 — Vulnerabilities classification
 1. Use the following pattern as a guide to classify the issues found in the vulnerability report list:
@@ -93,9 +93,9 @@ Spawn the selected **( only the strictly selected, not all of them )** subagents
 3. Spawn [classification-analyzer.md](./references/local-agents/classification-analyzer.md) subagent to perform deduplication and classification evaluation.
 
 ### Step 5 — Report list legitimacy check
-After Step 4 has performed united and/or excluded during the classification, at Step 5 spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 4 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them should validate the legitimacy of the particular issue.
+After Step 4 has performed uniting and/or excluding during the classification, at Step 5 spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 4 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them should validate the legitimacy of the particular issue.
 
-The core reason of Step 5 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+The core reason for Step 5 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 ### Step 6 — Output report
 1. Output the final clean vulnerability report list in a bordered table with the following structure:

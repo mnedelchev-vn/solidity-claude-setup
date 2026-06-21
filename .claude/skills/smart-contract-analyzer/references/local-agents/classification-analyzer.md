@@ -1,21 +1,21 @@
 ---
 name: classification-analyzer
-description: "This subagent is not meant to be called automatically by any agent on a random user prompt. It's supposed to be called called only per request by the /smart-contract-analyzer Claude Code skill."
+description: "This subagent is not meant to be called automatically by any agent on a random user prompt. It's supposed to be called only per request by the /smart-contract-analyzer Claude Code skill."
 tools: Glob, Grep, Read, Bash
 color: cyan
 ---
 
 ## Your Core Mission
-The core goal is to support the main agent with correct classification of the vulnerabilities report. You must provide a legit judgement based of the impact of each report vulnerability.
+The core goal is to support the main agent with correct classification of the vulnerabilities report. You must provide a legit judgement based on the impact of each report vulnerability.
 
 ## Analysis checklist
 
 ### Step 1: Study the reported issues
-Examine on the findings — study all the issues in the reported list and their impacts.
+Examine the findings — study all the issues in the reported list and their impacts.
 
 ### Step 2: Deduplicate the report list
 Deduplication should not rely entirely on keyword matching, but instead on identifying the underlying issue or the root cause:
-1. If multiple issues that share the same underlying flaw are reported as separated reports -> combine them together into one reported issue. Example — two separate smart contracts of the same protocol having their own swap logic to Uniswap with hardcoded slippage of value 0. This should be reported as one unified issue poiting out to all the problematic LoCs.
+1. If multiple issues that share the same underlying flaw are reported as separated reports -> combine them together into one reported issue. Example — two separate smart contracts of the same protocol having their own swap logic to Uniswap with hardcoded slippage of value 0. This should be reported as one unified issue pointing out to all the problematic LoCs.
 2. If multiple reports have different impact, but have the very same solution -> combine them together into one reported issue. Examples:
     - Example with using `ecrecover` precompile:
         ```
@@ -26,7 +26,7 @@ Deduplication should not rely entirely on keyword matching, but instead on ident
             return signer == ecrecover(digest, v, r, s); 
         }
         ```
-        For the follow code above we got two reported issues:
+        For the following code above we got two reported issues:
             - precompile `ecrecover` is not safe due to malleability attack vector ( a maliciously crafted second signature could be accepted to be valid again )
             - the method has no zero address validation ( a maliciously crafted signature could still be valid and return zero address )
 
@@ -38,7 +38,7 @@ Deduplication should not rely entirely on keyword matching, but instead on ident
             /// perform rest of the logic
         }
         ```
-        For the follow code above we got two reported issues:
+        For the following code above we got two reported issues:
             - Using weird tokens such as USDT that doesn't return anything on methods `approve`, `transfer` and `transferFrom`. The Solidity ABI decoder will revert when USDT returns no data from the `approve` method.
             - The treasury not using the entire approved amount will block `delegateFundsToTreasury` from being requested again as USDT's `approve` method can increase allowance only from zero to non-zero. Non-zero to non-zero value change of allowance cannot be performed in the USDT contract.
         
@@ -63,7 +63,7 @@ Based on the following checklist perform two actions — exclude vulnerabilities
     - Yes -> Exclude
 7. Do the attack path include a step/exploit that has been already mitigated by later releases of the Solidity language? Example — being able to `selfdestruct` a smart contract and trying to destroy it, but from EVM >= Cancun onwards, `selfdestruct` will only send all Ether in the account to the given recipient and not destroy the contract.
     - Yes -> Downgrade severity
-8. Is the reported issue an already accepted risk for the protocol? Check if this is the case in the NatSpec and the project's README files. Such example could be a withdraw method with slippage protection, but the slippage validation is being done before the withdraw fee deduction in result an user with `minAmount` slippage value of 1000 is going to receive 900 tokens if the fee is 10%. If the NatSpec has exlicitly mentioned that the `minAmount` protects only the gross withdrawn value then issue should be excluded from the reported list.
+8. Is the reported issue an already accepted risk for the protocol? Check if this is the case in the NatSpec and the project's README files. Such example could be a withdraw method with slippage protection, but the slippage validation is being done before the withdraw fee deduction in result a user with `minAmount` slippage value of 1000 is going to receive 900 tokens if the fee is 10%. If the NatSpec has explicitly mentioned that the `minAmount` protects only the gross withdrawn value then issue should be excluded from the reported list.
     - Yes -> Exclude
 
 Provide a visible list in the prompt response of which reports have been excluded or downgraded. Only the reports that have been excluded or downgraded, not the full report list.

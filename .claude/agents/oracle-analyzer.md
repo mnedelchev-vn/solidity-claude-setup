@@ -12,13 +12,13 @@ Help the main agent by validating the selected codebase with the checklist below
 
 ## General analysis checklist
 ### Case 1: Hardcoding stablecoins value
-Some protocols will assume that stablecoins are always equal to value of 1 ( 1$ ). This is absolutely wrong and they should include decentralized oracle logic to fetch the stablecoin price, because under different market conditions stablecoins can also depeg from fiat wether it's USD, EUR or any other fiat currency.
+Some protocols will assume that stablecoins are always equal to value of 1 ( 1$ ). This is absolutely wrong and they should include decentralized oracle logic to fetch the stablecoin price, because under different market conditions stablecoins can also depeg from fiat whether it's USD, EUR or any other fiat currency.
 
 ### Case 2: Hardcoding wrapped coins value
-Some protocols will assume that wrapped coins are always equal to the underlying token e.g. 1 ETH = 1 WETH. This is absolutely wrong and they should include decentralized oracle logic to fetch the wrapped coin price, because under different market conditions wrapped coins can depeg from the underlying token. Example — WBTC usually have similar price to BTC, but almost never exact equal price as BTC. Under volatile market conditions the difference might be even bigger, because of the delay of the WBTC token catching up the BTC price.
+Some protocols will assume that wrapped coins are always equal to the underlying token e.g. 1 ETH = 1 WETH. This is absolutely wrong and they should include decentralized oracle logic to fetch the wrapped coin price, because under different market conditions wrapped coins can depeg from the underlying token. Example — WBTC usually has a similar price to BTC, but almost never exact equal price as BTC. Under volatile market conditions the difference might be even bigger, because of the delay of the WBTC token catching up the BTC price.
 
 ### Case 3: Protocol relying on spot prices
-Some protocols will rely directly on spot prices. Absolutely wront as spot prices are highly volatile. Such spot prices could be from any DEX pool such as Uniswap, Curve, Balancer, etc. The pool's spot price could be manipulated through flashloan. Example of fetching Uniswap's V2 pool spot price which is a super wrong way to fetch a price:
+Some protocols will rely directly on spot prices. Absolutely wrong as spot prices are highly volatile. Such spot prices could be from any DEX pool such as Uniswap, Curve, Balancer, etc. The pool's spot price could be manipulated through flashloan. Example of fetching Uniswap's V2 pool spot price which is a super wrong way to fetch a price:
 ```
 function _getQuoteAmountOut(address _tokenIn, address _tokenOut, uint16 _fee, uint256 _amount) internal returns(uint256) {
     return IQuoter(quoterAddress).quoteExactInputSingle(
@@ -48,10 +48,10 @@ Apply this checklist only for existing Chainlink integration, if such integratio
 ### Case 1: Missing proper price validations
 In order to make sure that the fetched price feed data is valid there have to be few different validations:
 1. Making sure that feed answer is valid — `require(answer > 0, InvalidAnswer());`
-2. Timestamp & hearthbeat validation — `require(updatedAt > block.timestamp - priceFeedHeartbeat, StalePrice());`
+2. Timestamp & heartbeat validation — `require(updatedAt > block.timestamp - priceFeedHeartbeat, StalePrice());`
 
 ### Case 2: Using same heartbeat for multiple tokens
-Different price feeds have different heartbeat rate. Using the same heartbeat value for multiple price feeds is wrong — each price feed should be validated for stale price with the corresponding true heartbeat value. For example ETH/ USD has a heartbeat of 3600s ( 1 hour ), but BTC/ ETH has a heartbeat of 86400s ( 24 hours ).
+Different price feeds have different heartbeat rates. Using the same heartbeat value for multiple price feeds is wrong — each price feed should be validated for stale price with the corresponding true heartbeat value. For example ETH/ USD has a heartbeat of 3600s ( 1 hour ), but BTC/ ETH has a heartbeat of 86400s ( 24 hours ).
 
 ### Case 3: Using same decimals for multiple tokens
 Different price feeds have different `decimals` value. Using the same decimal value for multiple price feeds is wrong, different Chainlink price feed decimals should be handled explicitly.
@@ -67,7 +67,7 @@ Different price feeds have different `decimals` value. Using the same decimal va
 Having on-chain Chainlink integration to fetch price feeds on a L2 network requires additional validation to check if the L2 sequencer is up. L2 networks rely on sequencers to efficiently manage transaction ordering, execution, and batching before submitting them to the L1. It's entirely possible that the sequencer could become unavailable meaning that no new batched blocks will be produced by the sequencer and this could lead to errors on the L2 or invalid/stale price data.
 
 ### Case 6: Older chainlink price feeds include min and max caps
-Thera are still some Chainlink price feeds have included minimum and maximum price caps — methods `minAnswer` and `maxAnswer`. Meaning that if the actual price value goes out of the defined range it will be capped. If a list of price feeds is available validate if some of the price feeds does include the methods `minAnswer` and `maxAnswer` and then check if this rare case of price being capped is also applied in the protocol. Ideally the protocol should revert if price is being capped to reduce further losses. Example of such price with existing `minAnswer` and `maxAnswer` methods is [BNB-USD](https://bscscan.com/address/0x137924d7c36816e0dcaf016eb617cc2c92c05782#readContract).
+There are still some Chainlink price feeds that have included minimum and maximum price caps — methods `minAnswer` and `maxAnswer`. Meaning that if the actual price value goes out of the defined range it will be capped. If a list of price feeds is available validate if some of the price feeds do include the methods `minAnswer` and `maxAnswer` and then check if this rare case of price being capped is also applied in the protocol. Ideally the protocol should revert if price is being capped to reduce further losses. Example of such price with existing `minAnswer` and `maxAnswer` methods is [BNB-USD](https://bscscan.com/address/0x137924d7c36816e0dcaf016eb617cc2c92c05782#readContract).
 
 ### Case 7: Using Aave's oracle
 Sometimes projects might decide to fetch the price from Aave’s oracle, but this is an issue. Aave’s V3 oracle uses the deprecated `latestAnswer` method instead of the up-to-date method `latestRoundData`. This approach also does not include validation of price staleness.

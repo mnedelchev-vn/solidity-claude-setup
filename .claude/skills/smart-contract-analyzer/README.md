@@ -43,12 +43,12 @@ The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
 - etc, etc.
 
-After the selected subagents by the orchestration routing step are done analyzing, there is another subagent to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double check the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
+After the selected subagents by the orchestration routing step are done analyzing, there is another subagent to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double checks the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
 - remove duplicates _(very often two separate impacts on a protocol have the same root cause)_
 - remove issues from the vulnerabilities report list if they're invalid
 - or to downgrade issues if the initial classification is wrong
 
-After the classification step have been executed, next in line is to perform a legitimacy check of the reported vulnerabilities list. For each one of the existing issues in the reported list there is spawn of dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagent meaning that if after the classification step there are 10 issues in the reported list then 10 separate independent subagents are going to be spawned. Each one of them with clear context window and questioning the legitimacy of the issues. The core reason of this step is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+After the classification step has been executed, next in line is to perform a legitimacy check of the reported vulnerabilities list. For each one of the existing issues in the reported list there is a spawn of a dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagent meaning that if after the classification step there are 10 issues in the reported list then 10 separate independent subagents are going to be spawned. Each one of them with a clear context window and questioning the legitimacy of the issues. The core reason for this step is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
 > [!NOTE]  
 > Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only access )_. Access to `Write` or `Edit` tools is denied.
@@ -74,18 +74,18 @@ Trigger the skill directly with the following terminal command:
 
 ## Execution time
 
-The skill was triggered numerous of times on the Sherlock's [Clear Macro by Superfluid contest](https://audits.sherlock.xyz/contests/1263?filter=scope) using _Opus 4.6_ and effort being set as middle value — the results show that analyzing ~400 nSLOC takes roughly 5 minutes. Reasons why the skill could take longer than expected time to execute:
+The skill was triggered numerous times on the Sherlock's [Clear Macro by Superfluid contest](https://audits.sherlock.xyz/contests/1263?filter=scope) using _Opus 4.6_ and effort being set as middle value — the results show that analyzing ~400 nSLOC takes roughly 5 minutes. Reasons why the skill could take longer than expected time to execute:
 - analyzing bigger scope with more lines of code
 - running the skill on more complex codebase
 - running the skill on a complex model with high effort being set
 
-## Advices
+## Advice
 
-1. By default agent's response is non deterministic meaning that the very same user prompt being sent multitple times doesn't necessarily mean that the response will always be the same. Run the analyzer at least 3 times to get a compherensive report.
-2. Tight scope — run the skill on not more than 5 to 10 smart contracts. Smaller and tighten scope means that each subagent will perform with cleaner context thus leading to better results.
+1. By default agent's response is non deterministic meaning that the very same user prompt being sent multiple times doesn't necessarily mean that the response will always be the same. Run the analyzer at least 3 times to get a comprehensive report.
+2. Tight scope — run the skill on not more than 5 to 10 smart contracts. Smaller and tighter scope means that each subagent will perform with cleaner context thus leading to better results.
 3. Providing manual context:
     - Manually adding parameter `--exclude-subagents` to the trigger command will offload the skill with the decision making in the orchestration routing
-    - Manually adding parameter `--raw-manual-context` will also help the subagents orchestration routing e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"` will helo for cleaner report output
+    - Manually adding parameter `--raw-manual-context` will also help the subagents orchestration routing e.g. `/smart-contract-analyzer StakingPool.sol --raw-manual-context "protocol won't use rebase tokens"` will help for cleaner report output
 
 > [!WARNING]
 > Each subagent spawned by this skill provides a solid base ground checklist for the particular area of attack vectors, but it's imperfect! Every month in the web3 world we witness different and more complex varieties of web3 vulnerabilities which means that it's impossible to collect all attack vectors at one place. Updating the subagent's checklists with more and more attack vectors is a never ending process. Treat this skill as a helper and a tool, rather than fully delegating your work on it.

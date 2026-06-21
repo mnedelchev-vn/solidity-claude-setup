@@ -98,8 +98,8 @@ Validate that the signature is protected from reusing. Usually this is done thro
 ### Case 4: Don't use abi.encodePacked
 The signature verification shouldn't use `abi.encodePacked`, should use `abi.encode`. The problem is if the signature includes dynamic type variables there is the possibility for hash collision.
 
-### Case 5: Mising deadline parameter to signature
-Having a deadline included into the signature helps to add a lifespan of the signature. Let's say we sign a signature, but for some reason it doesn't get used on-chain immediatelly. Time passes and we might not want or need this signature to be active anymore. There is need for mechanism for signature to become inactive and this solution can be to introduce a `deadline` parameter to the signature. Example:
+### Case 5: Missing deadline parameter to signature
+Having a deadline included into the signature helps to add a lifespan of the signature. Let's say we sign a signature, but for some reason it doesn't get used on-chain immediately. Time passes and we might not want or need this signature to be active anymore. There is need for mechanism for signature to become inactive and this solution can be to introduce a `deadline` parameter to the signature. Example:
 ```
 DEPOSIT_TYPEHASH = keccak256("DepositWithPermit(uint256 amount,uint256 nonce,uint256 deadline)");
 
@@ -129,7 +129,7 @@ function depositWithPermit(
 ### Case 6: Using ecrecover precompile is dangerous
 1. Signature malleability - precompile `ecrecover` should not be used directly, because in the ECDSA elliptic curve for every `r`, `s`, `v` there is another coordinate which returns the same valid result. OZ’s ECDSA library fixed this by restricting `s` to be in the upper range.
 
-2. Precompile `ecrecover` by default doesn't revert and returns zero address if there is something wrong with the signature, for example hash not corresponding to the signature. Attackers could manipulate a signature to look like it was signed by an zero address so address(0) == ecrecover(digest, v, r, s); condition will be true. This is fixable by validating that the output of ecrecover is not a zero address. This issue is also coevered in the OZ’s ECDSA library.
+2. Precompile `ecrecover` by default doesn't revert and returns zero address if there is something wrong with the signature, for example hash not corresponding to the signature. Attackers could manipulate a signature to look like it was signed by a zero address so address(0) == ecrecover(digest, v, r, s); condition will be true. This is fixable by validating that the output of ecrecover is not a zero address. This issue is also covered in the OZ’s ECDSA library.
 
 ### Case 7: Front-running permit
 1. The `permit` logic is a ERC20 extension built on-top of EIP-712 that allows approvals to be processed in the form of signature instead of separate on-chain action ( e.g. erc20.approve ) and the issue here is that anyone can front-run such signature and eventually cause DOS attack to following code for example:
@@ -148,9 +148,9 @@ function deposit(uint256 _amount, Permit calldata _signature) public {
     IERC20(USDC).safeTransferFrom(_signature.acct, address(this), _amount);
 }
 ```
-In the example above a malicious actor could grab `_signature` and front-run the transaction by directly requesting the USDC contract `permit` method. The impact is DOS of method `deposit`, because now the signature verification will fail when the contract makes request to `IERC20Permit(USDC).permit`. Because the signature has been already verified ealier by the front-running attack.
+In the example above a malicious actor could grab `_signature` and front-run the transaction by directly requesting the USDC contract `permit` method. The impact is DOS of method `deposit`, because now the signature verification will fail when the contract makes request to `IERC20Permit(USDC).permit`. Because the signature has been already verified earlier by the front-running attack.
 
-2. Method `permit` won't revert if the particular token has a `fallback` method. Such token is WETH for example. In that sense the `permit` method should be request to protocol controlled list of tokens. If user is able to request `WETH.permit` he might be able to exploit the system.
+2. Method `permit` won't revert if the particular token has a `fallback` method. Such token is WETH for example. In that sense the `permit` method should be restricted to a protocol-controlled list of tokens. If user is able to request `WETH.permit` he might be able to exploit the system.
 
 ### Case 8: Duplicate signature acceptance in multi-sig / threshold verification
 Multi-signature or threshold-based verification schemes must check that each signature comes from a unique signer. Without deduplication, a single signer can submit the same valid signature multiple times to meet the quorum threshold alone. Check:

@@ -1,6 +1,6 @@
 ---
 name: solidity-protocol-context
-description: This skill serve to provide context about a Solidity protocol or a smart contract(s). The skill analyzes the particular smart contract project and builds two level context knowledge — High level ( the summary version ) and In depth level ( the detailed version including diagrams ). Use when the user prompt is about conceptual or general questions regarding a Solidity protocol or a smart contract(s).
+description: This skill serves to provide context about a Solidity protocol or a smart contract(s). The skill analyzes the particular smart contract project and builds two level context knowledge — High level ( the summary version ) and In depth level ( the detailed version including diagrams ). Use when the user prompt is about conceptual or general questions regarding a Solidity protocol or a smart contract(s).
 license: MIT License
 metadata:
     author: https://x.com/mnedelchev_
@@ -18,7 +18,7 @@ All of the terminal arguments listed below are off by default.
 - `--skip-high-level`: Skips the High level report output and head directly to the In-depth level report
 - `--skip-in-depth-level`: Skips the In-depth level report
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project `context-report-<protocol_slug>.md`.
-- `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Enumerate the sitemap, discover subpages and crawl the rest of the documentation tree. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code. The scope is the entire url page and all of it's subpages.
+- `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Enumerate the sitemap, discover subpages and crawl the rest of the documentation tree. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code. The scope is the entire url page and all of its subpages.
 
 ## Instructions
 ### Step 1 — Crawling
@@ -28,9 +28,9 @@ At this step crawl the protocol smart contract(s). If the skill has been trigger
 ### Step 2 — High level report
 As the title of this step says — this is a very high level exploring of the protocol. Ignore any internal methods and logic, dependencies should be ignored as well. The key of the High level report is not to get lost in complexity.
 
-1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic english what is the project about.
+1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic English what is the project about.
 2. List all the actors — e.g. users, governance, operators, signers, admins, depositors, borrowers, liquidators, treasury managers, fee collectors, etc., all of them! If for some of the roles it's sure that it's supposed to be a smart contract then mark it as "Contract", if not then "EOA or smart contract".
-3. Table list of all the entry points of per smart contract ( public or external methods without access control ). `fallback` or `receive` are also treated as entry point to particular contract. Ignore getter methods and "helper/utils" methods that are built to serve other methods, example — `computeFee`, `calculateInterest`, etc. ( most of the times these methods are `internal` ). Add a table column with short plain text description of the method's purpose. Add a table column with method keywords such as modifiers, `payable`, etc. Include symmetry checks of opposing methods, example:
+3. Table list of all the entry points of per smart contract ( public or external methods without access control ). `fallback` or `receive` are also treated as an entry point to particular contract. Ignore getter methods and "helper/utils" methods that are built to serve other methods, example — `computeFee`, `calculateInterest`, etc. ( most of the times these methods are `internal` ). Add a table column with short plain text description of the method's purpose. Add a table column with method keywords such as modifiers, `payable`, etc. Include symmetry checks of opposing methods, example:
     - Method `haltSwap()` has the mirror method `enableSwap()`
     - Method `deposit(uint256 amount)` has the mirror method `withdraw(uint256 amount)`. A method with particular logic could have multiple mirror methods, e.g.:
         - `withdraw(uint256 amount)`
@@ -40,7 +40,7 @@ As the title of this step says — this is a very high level exploring of the pr
 
 ### Step 3 — In-depth level report
 1. Diagrams of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role:
-    - Provide separate list of there is a superior protocol role that manages other roles e.g. admin being able to add or remove operators
+    - Provide separate list if there is a superior protocol role that manages other roles e.g. admin being able to add or remove operators
 2. Diagrams of all the funds flows in each contract. A contract having `payable` fallback is also considered as potential funds flow.
     - Add information about what type of currency each of the contracts will hold in the different stages or cases of the lifecycle
     - Separated diagrams about the fee collection logic

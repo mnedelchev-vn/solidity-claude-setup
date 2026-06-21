@@ -2,8 +2,8 @@
 
 Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
 
-The purpose of this skill is to crawl a Solidity protocol codebase and provide a two tier context knowledge about — High level and In-depht level:
-- **High level** is the programmer's first encounter with the particular protocol. The goal here is not distract with all the internal and complex modules, but:
+The purpose of this skill is to crawl a Solidity protocol codebase and provide a two tier context knowledge about — High level and In-depth level:
+- **High level** is the programmer's first encounter with the particular protocol. The goal here is not to distract with all the internal and complex modules, but:
     - to get the basic idea and type of the protocol
     - see who are the roles in the protocol - depositors, treasury managers, etc.
     - to get a list of all of the entry points to the protocol such as public and external methods, perform a symmetry check to connect all mirror methods — `deposit` & `withdraw`; `stake` & `unstake`; etc.

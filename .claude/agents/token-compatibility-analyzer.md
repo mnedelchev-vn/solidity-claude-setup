@@ -210,7 +210,7 @@ SafeERC20.safeApprove(IERC20(usdt), router, type(uint256).max);
 SafeERC20.forceApprove(IERC20(usdt), router, amount);
 ```
 
-### Case 20: Solmate `safeTransfer` / `safetransferFrom` skips contract-existence check
+### Case 20: Solmate `safeTransfer` / `safeTransferFrom` skips contract-existence check
 Solmate's `SafeTransferLib` (unlike OZ's `SafeERC20`) does not verify that the token address contains code before calling it. If the token address is zero or an EOA, the low-level call succeeds silently, causing the protocol to credit transfers that never happened. Check:
 - Whether the project uses Solmate's `SafeTransferLib` (not OZ's `SafeERC20`) for ERC20 operations
 - Whether there is an explicit `address(token).code.length > 0` guard before first use of a token
