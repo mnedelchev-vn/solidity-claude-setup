@@ -239,3 +239,29 @@ ERC20 and ERC721 approvals granted to an escrow or vault contract persist after 
 - Whether a club, vault, or position NFT transfer clears all token approvals granted by the previous owner on assets held inside the escrow
 - Whether a previously time-locked NFT that is moved out and back into a vault re-inherits the old (still active) approval or timelock
 - Whether `transferERC721` inside a vault removes the internal approval record after executing the transfer
+
+### Case 24: ERC165 dispatch fall-through when target omits `supportsInterface`
+A decoder/wrapper uses `supportsInterface` to choose between dispatch branches, but a wrapped contract that omits ERC165 (the call returns no data, or `false`) silently falls through to a DEFAULT branch — and downstream code then proceeds under the *wrong* interface assumption (e.g. an ERC1155 handled as ERC721, or vice versa). This is distinct from Case 18 (user-supplied-flag confusion and no-op catch-alls): here ERC165 *is* used for selection, but a missing/false response defaults to the wrong branch instead of reverting. Check:
+- Whether every point where `supportsInterface` selects a dispatch branch reverts on a missing or `false` response rather than silently defaulting to another interface
+- Whether `supportsInterface` is wrapped in a `try/catch` (or low-level `staticcall`) whose failure path defaults to a concrete standard instead of rejecting the token
+- Whether a token that implements *neither* ERC721 nor ERC1155 interface IDs reaches a branch that then calls `transferFrom` / `safeTransferFrom` under an assumed standard
+- Whether the default branch is the *more permissive* of the two standards (e.g. treating an unknown token as ERC721 and transferring quantity 1 of an ERC1155 supply)
+```solidity
+// BAD — non-ERC165 token (or one returning false) falls through to ERC721 default
+function _dispatch(address nft, address from, address to, uint256 id, uint256 amount) internal {
+    if (IERC165(nft).supportsInterface(type(IERC1155).interfaceId)) {
+        IERC1155(nft).safeTransferFrom(from, to, id, amount, "");
+    } else {
+        IERC721(nft).transferFrom(from, to, id); // wrong if nft is actually ERC1155 w/o ERC165
+    }
+}
+
+// GOOD — require an explicit, recognised interface; revert otherwise
+if (IERC165(nft).supportsInterface(type(IERC1155).interfaceId)) {
+    IERC1155(nft).safeTransferFrom(from, to, id, amount, "");
+} else if (IERC165(nft).supportsInterface(type(IERC721).interfaceId)) {
+    IERC721(nft).transferFrom(from, to, id);
+} else {
+    revert("unsupported token standard");
+}
+```
