@@ -342,3 +342,37 @@ uint256 totalNewDebt = principal + originationFee;
 require(isHealthy(msg.sender, totalNewDebt), "Unhealthy after fee");
 debtOf[msg.sender] += totalNewDebt;
 ```
+
+### Case 26: Peg invariant breaks during a partial mint
+A pegged or collateral-backed mint (stablecoin against collateral, pegged vault share) that partially succeeds — or whose sub-step reverts after supply has already been incremented — can leave a portion of supply un-collateralized. The core invariant `totalSupply <= totalBacking` silently breaks and stays broken until the next full mint cycle re-synchronizes the accounting. Check:
+- Whether the `totalSupply <= totalBacking` (or `mintedDebt <= lockedCollateral`) invariant holds even on partial-mint paths where only some of the requested amount is minted
+- Whether any path increments supply (mints the stablecoin/share) BEFORE the backing is fully secured (collateral pulled in, oracle-priced, locked) — order must be back-first, mint-second
+- Whether a multi-step mint that pulls collateral from several sources, or mints in a loop, leaves a half-collateralized state if one sub-step reverts or returns less than requested (e.g., fee-on-transfer collateral, capped deposit, failed leg of a basket)
+- Whether `try/catch` around a collateral-deposit leg continues to mint the full requested supply when the catch branch secured less than expected
+- Whether the invariant is asserted at the END of the mint (a post-mint `require(totalSupply <= totalBacking)`), so any partial path that violates it reverts the whole transaction
+- Whether "minimum mint" or rounding logic can mint shares for collateral that never fully arrived
+```solidity
+// BAD — supply incremented before all collateral legs are secured; a reverting leg
+// leaves stablecoin minted against missing backing
+function mint(uint256[] calldata legs) external {
+    uint256 minted = _quote(legs);
+    _mint(msg.sender, minted);                 // supply up first
+    for (uint i; i < legs.length; ++i) {
+        collateral[i].transferFrom(msg.sender, address(this), legs[i]); // a leg can revert/short
+    }
+    // invariant totalSupply <= totalBacking now broken if a leg shorted
+}
+
+// GOOD — secure all backing first, mint last, and assert the peg invariant
+function mint(uint256[] calldata legs) external {
+    uint256 backingAdded;
+    for (uint i; i < legs.length; ++i) {
+        uint256 before = collateral[i].balanceOf(address(this));
+        collateral[i].transferFrom(msg.sender, address(this), legs[i]);
+        backingAdded += (collateral[i].balanceOf(address(this)) - before) * price[i];
+    }
+    uint256 minted = _quote(backingAdded);     // mint only against backing actually received
+    _mint(msg.sender, minted);
+    require(totalSupply() <= totalBacking(), "peg invariant"); // reverts any partial-mint violation
+}
+```
