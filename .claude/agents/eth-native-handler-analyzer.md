@@ -275,3 +275,28 @@ function onRevert(bytes calldata data) external payable {
 
 // GOOD — refund before or after the guard, never skip it
 ```
+
+### Case 21: Native sentinel address flowing downstream into an IERC20 op
+Protocols that represent native ETH with a sentinel placeholder (`_ETH_ADDRESS_`, `address(0)`, `0xEeee...EEeE`) branch on `token == sentinel` to take the native path — but if that same `token` value later reaches an `IERC20` call, the operation reverts (the placeholder has no contract code) or, via a low-level call, silently no-ops without moving any funds. This is distinct from Case 16 (forwarding raw `msg.value`): here the sentinel *address* itself flows forward into an ERC20 operation. Check:
+- Whether, for every sentinel branch (`token == _ETH_ADDRESS_`, `token == address(0)`, `token == 0xEeee...EEeE`), the `token` value is walked forward to every downstream use
+- Whether any `IERC20(token).approve / transfer / transferFrom / balanceOf` is reachable on the sentinel address rather than being short-circuited by the native path
+- Whether a low-level `token.call(abi.encodeWithSelector(IERC20.transfer.selector, ...))` on the sentinel silently succeeds (no code → call returns true) without transferring funds
+- Whether the native branch fully returns/continues before any shared ERC20 logic runs, so the sentinel never reaches `SafeERC20`/`IERC20`
+```solidity
+// BAD — sentinel branch sets the native flag but token still flows into IERC20
+function pull(address token, uint256 amount) internal {
+    if (token == _ETH_ADDRESS_) {
+        require(msg.value == amount); // native handled...
+    }
+    IERC20(token).transferFrom(msg.sender, address(this), amount); // ← reverts/no-ops on sentinel
+}
+
+// GOOD — native path returns before any ERC20 op
+function pull(address token, uint256 amount) internal {
+    if (token == _ETH_ADDRESS_) {
+        require(msg.value == amount);
+        return;
+    }
+    IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+}
+```
