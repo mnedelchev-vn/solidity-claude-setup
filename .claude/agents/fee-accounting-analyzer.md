@@ -245,3 +245,25 @@ A fee-generating operation (e.g., a short open, a harvest, a rebalance) produces
 - Whether fees taken out of a pool reduce the pool's tracked balance (not just the actual token balance)
 - Whether `emergencyWithdraw` or exceptional exit paths zero out fee tracking state along with transferring funds
 - Whether uncollected or "in-flight" fees are excluded from share price / NAV calculations to avoid double-counting
+
+### Case 22: Caller-supplied (non-admin) fee/bonus parameter with no upper bound
+An external entry point accepts a fee/bonus/tip/multiplier value directly from the CALLER as a function parameter (not via an admin setter), and the downstream economics assume a reasonable value while the caller sets an arbitrary one that drains the protocol or bricks the path. This is distinct from Case 8 (admin fee-setter bounds): here the untrusted value flows in per-call from `msg.sender`, so an admin `MAX_FEE` constant on the *setter* provides no protection. Check:
+- Whether every fee/bonus/tip/multiplier sourced from a function parameter has an explicit upper bound (`require(fee <= MAX_FEE)`) at the entry point
+- Whether a caller-set `keeperTip`, `liquidationBonus`, `relayerFee`, or `slippageBps` parameter is paid out of protocol or counterparty funds without a cap
+- Whether a caller-supplied multiplier applied to a reward or payout can be set arbitrarily high to over-mint or over-pay
+- Whether a caller-supplied fee can be set so high that it underflows or reverts the operation it gates, bricking the path for victims (e.g. a fee exceeding the principal)
+- Whether the bound is enforced before any value moves, not merely emitted in an event or checked off-chain
+```
+// BAD — caller chooses their own tip, paid from protocol funds, no cap
+function executeOrder(uint256 orderId, uint256 keeperTip) external {
+    _settle(orderId);
+    payable(msg.sender).transfer(keeperTip); // attacker passes keeperTip = balance
+}
+
+// GOOD — bound the caller-supplied value
+function executeOrder(uint256 orderId, uint256 keeperTip) external {
+    require(keeperTip <= MAX_KEEPER_TIP, "tip too high");
+    _settle(orderId);
+    payable(msg.sender).transfer(keeperTip);
+}
+```
