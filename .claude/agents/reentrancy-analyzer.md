@@ -244,3 +244,27 @@ A variant of cross-contract reentrancy where the re-entered contract is an oracl
 - Whether a withdrawal or redemption function emits an event or updates a price feed AFTER making a token transfer, allowing the mid-transfer state to be read by an oracle callback
 - Whether vault `withdraw()` or `redeem()` functions expose a read-only reentrancy surface to downstream protocols that price LP tokens based on `totalAssets()` or `convertToAssets()`
 - Whether `totalSupply` and `balanceOf` reads used in ratio calculations occur across an external call boundary without a reentrancy guard on the queried contract
+
+### Case 20: Dependency swap while a callback from the old dependency is still pending
+An admin or keeper swaps an external module (strategy, oracle, adapter, router, callback source) via a setter while a callback or async response from the PREVIOUS module is still pending. When that in-flight callback returns, it re-enters a contract that now points at the NEW dependency, executing against mismatched state — the callback's accounting assumes the old module while the contract's `msg.sender == dependency` check (or settlement logic) now references the new one. Check:
+- Whether a setter (`setStrategy`, `setOracle`, `setAdapter`, `setRouter`, `setCallbackSource`) can change the active dependency while a callback (`onFlashLoan`, `executeOperation`, `fulfill`, `settle`, harvest/withdraw completion) from the previous dependency is unresolved
+- Whether the pending-callback authorization checks the dependency that ORIGINATED the request, not the current global one — a swap mid-flight either lets the old (now-detached) module's callback through against new state, or causes a legitimate callback to revert and strand funds
+- Whether the swap settles, cancels, or drains all outstanding interactions with the old module before re-pointing (e.g., `_harvestAndWithdrawAll(oldStrategy)` before `strategy = newStrategy`)
+- Whether the contract can be left in a state where the old module still holds funds/owes a callback but is no longer the recognized dependency
+```solidity
+// BAD — strategy swapped while old strategy's async withdrawal callback is pending;
+// callback returns and settles against the NEW strategy's accounting
+address public strategy;
+function setStrategy(address s) external onlyOwner { strategy = s; } // no settlement of in-flight callbacks
+function onWithdrawComplete(uint256 amount) external {
+    require(msg.sender == strategy);      // old strategy's callback now rejected, OR
+    _credit(amount);                      // credited under new strategy's mismatched state
+}
+
+// GOOD — settle/drain the old dependency before re-pointing, and bind callbacks to the originator
+function setStrategy(address s) external onlyOwner {
+    require(pendingCallbacks[strategy] == 0, "in-flight callback");
+    _harvestAndWithdrawAll(strategy);
+    strategy = s;
+}
+```
