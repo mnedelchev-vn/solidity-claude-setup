@@ -389,3 +389,77 @@ function register(address referrer) external {
     referrerOf[msg.sender] = referrer;
 }
 ```
+
+### Case 25: Two-input parameter divergence (unenforced relationship between attacker-controlled inputs)
+At any entry point that accepts two or more attacker-controlled inputs — e.g. `(amountClaimed, amountSent)`, `(tokenIn, tokenOut)`, `(assetId, value)` — the contract fails to enforce the relationship the downstream code assumes between them. The attacker deposits/specifies token A but causes settlement against token B's balance, or asserts an amount different from what is actually transferred, draining the difference. This generalises the parallel-array and distinctness cases (17, 20) to any cross-input invariant, including value/identity pairs. Check:
+- Whether every entry point with two or more attacker inputs enforces the relation the downstream code assumes (e.g., `assertedAmount == actualTransferred`, `settlementToken == depositToken`)
+- Whether an `amountClaimed`/`amountSpecified` parameter is reconciled against the actual measured balance delta, not trusted blindly
+- Whether `(tokenIn, tokenOut)` pairs are validated so settlement cannot be forced against an unrelated token's balance
+- Whether an `(assetId, value)` or `(market, collateral)` pair is checked so `value`/`collateral` actually corresponds to the named asset/market
+- Whether the relationship is re-checked after any user-controlled callback or external call that could change one side
+```
+// BAD — caller asserts amountClaimed but only amountSent is transferred; difference is credited for free
+function settle(uint256 amountClaimed, uint256 amountSent) external {
+    token.transferFrom(msg.sender, address(this), amountSent);
+    credited[msg.sender] += amountClaimed; // no check amountClaimed == amountSent
+}
+
+// BAD — deposits tokenIn but settlement reads tokenOut balance
+function swapSettle(address tokenIn, address tokenOut, uint256 amount) external {
+    IERC20(tokenIn).transferFrom(msg.sender, address(this), amount);
+    uint256 bal = IERC20(tokenOut).balanceOf(address(this)); // unrelated token used as proof of deposit
+    _credit(msg.sender, bal);
+}
+
+// GOOD — reconcile asserted amount against measured delta
+function settle(uint256 amountClaimed) external {
+    uint256 before = token.balanceOf(address(this));
+    token.transferFrom(msg.sender, address(this), amountClaimed);
+    require(token.balanceOf(address(this)) - before == amountClaimed, "Amount mismatch");
+    credited[msg.sender] += amountClaimed;
+}
+```
+
+### Case 26: Balance-at-computed-address used as an existence proof
+Code treats a non-zero `balanceOf`/native balance at a computed or counterfactual address as proof that the contract exists or was deployed. Because anyone can transfer tokens or ETH to an address before any code is deployed there (e.g., a CREATE2 counterfactual address), an attacker pre-funds the address to forge a false positive and bypass the deployment gate. Check:
+- Whether existence/deployment checks use `addr.code.length > 0` (or `extcodesize`) rather than a balance
+- Whether CREATE2 factories that "deploy on first use" decide already-deployed status from a balance instead of bytecode presence
+- Whether wallet/account-abstraction flows treat a funded counterfactual address as a deployed account
+- Whether any `require(token.balanceOf(addr) > 0)` or `require(addr.balance > 0)` is used as an "is this initialized/deployed" guard
+```
+// BAD — pre-funding the counterfactual address forges deployment
+function ensureDeployed(address account) internal {
+    if (IERC20(token).balanceOf(account) == 0) {
+        _deploy(account); // skipped if attacker pre-funded -> proceeds on undeployed account
+    }
+}
+
+// GOOD — bytecode presence is the only valid proof of deployment
+function ensureDeployed(address account) internal {
+    if (account.code.length == 0) {
+        _deploy(account);
+    }
+}
+```
+
+### Case 27: Magic-ID storage key whose entry was never written
+A library or helper uses a hardcoded constant ID as a storage slot or mapping key, but no real entry was ever written under that exact key. Reads then return zero-initialised values, and the caller proceeds on phantom data (a zero address, a zero rate, a default struct) as if it were a legitimate configured entry. Check:
+- Whether every storage/mapping lookup keyed by a hardcoded constant ID has a corresponding write under that exact key before any read
+- Whether a config/registry getter that indexes by a magic constant distinguishes "never set" from a legitimately-zero value (e.g., an `exists`/`initialized` flag)
+- Whether a refactor changed the constant on the write path but not the read path (or vice versa), so the keys no longer match
+- Whether default zero-init values returned for an unwritten key are treated as a valid address, price, or permission downstream
+```
+// BAD — reads config under a magic ID that was never populated
+bytes32 constant FEED_ID = keccak256("ETH_USD");
+function price() external view returns (uint256) {
+    return feeds[FEED_ID].rate; // returns 0 if no entry was ever written under FEED_ID
+}
+
+// GOOD — assert the entry exists before trusting it
+bytes32 constant FEED_ID = keccak256("ETH_USD");
+function price() external view returns (uint256) {
+    Feed memory f = feeds[FEED_ID];
+    require(f.initialized, "Feed not configured");
+    return f.rate;
+}
+```
