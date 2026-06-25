@@ -231,3 +231,31 @@ If a single role (owner, RNG oracle, potCreator, delegate) is required to advanc
 - Whether a delegate or staker can manufacture an open proposal to block a delegatee's withdrawal indefinitely
 - Whether multi-sig or DAO execution paths can deadlock (quorum can never be reached) after member removal, trapping treasury funds
 - Whether the contract has a time-based fallback that activates withdrawal rights without requiring the privileged actor's cooperation
+
+### Case 25: Value stranded across an emergency/pause transition (no paired cleanup sweep)
+When emergency mode pauses normal flows, the cleanup/exit path often handles only the principal and does NOT sweep value that accrued during the emergency window — pending rewards, accrued fees, in-flight earnings, dust harvested while paused. That value is permanently stuck because the normal claim/harvest path is paused and the emergency path never touches it. Check:
+- Whether every emergency/pause transition has a paired cleanup path that sweeps ALL accumulated value (rewards, fees, yield, in-flight settlements), not just the principal balance
+- Whether `emergencyWithdraw` / `emergencyExit` skips the `harvest()` / `claim()` / `_accrue()` step that the normal withdraw performs, leaving accrued rewards stranded
+- Whether earnings that arrive AFTER emergency mode is entered (a strategy harvest, a delayed bridge credit, streamed rewards) have any path to be collected while paused
+- Whether resuming normal operations re-enables claiming of value accrued during the pause, or whether that value is orphaned by a reset of the reward index / accrual checkpoint at unpause
+- Whether protocol fees that continued to accumulate during the emergency window can be withdrawn by the treasury, or are locked in the paused contract
+```solidity
+// BAD — emergency exit returns principal but abandons accrued rewards
+function emergencyWithdraw() external {
+    uint256 principal = deposits[msg.sender];
+    deposits[msg.sender] = 0;
+    asset.safeTransfer(msg.sender, principal);
+    // MISSING: sweep pendingRewards[msg.sender] accrued before/during the emergency
+}
+
+// GOOD — settle accrued value before (or alongside) returning principal
+function emergencyWithdraw() external {
+    _accrue(msg.sender);
+    uint256 principal = deposits[msg.sender];
+    uint256 rewards = pendingRewards[msg.sender];
+    deposits[msg.sender] = 0;
+    pendingRewards[msg.sender] = 0;
+    asset.safeTransfer(msg.sender, principal);
+    rewardToken.safeTransfer(msg.sender, rewards);
+}
+```
