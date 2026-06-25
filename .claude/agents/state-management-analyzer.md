@@ -279,3 +279,28 @@ function setPeriodSize(uint256 newSize) external onlyOwner {
 
 // GOOD — pairs read globalPeriodSize dynamically, or setter iterates existing pairs
 ```
+
+### Case 22: Provider/dependency swapped while a request from the OLD provider is still pending
+An external provider wrapper (oracle, relayer, VRF coordinator, router) address can be swapped via a setter while requests originated by the OLD provider are still in flight. The in-flight response is then accepted or rejected under the NEW provider's assumptions, or the requester gets to choose which provider fulfills a pending request. Check:
+- Whether in-flight responses are tied to the provider that originated them (e.g., the request stores `originatingProvider` and fulfillment validates `msg.sender == request.provider`, not the current global `provider`)
+- Whether a setter (`setOracle`, `setRelayer`, `setVRFCoordinator`, `setRouter`) can change the active provider while `requestId`s issued by the previous provider are unfulfilled
+- Whether a pending request can be fulfilled/poisoned by a newly-set provider that never issued it, or replayed across the swap
+- Whether the requester can pick which provider fulfills a pending request (selecting the more favorable result)
+- Whether requests outstanding at swap time are explicitly cancelled, refunded, or migrated rather than left ambiguous
+```
+// BAD — fulfillment trusts the current provider, not the one that issued the request
+address public vrfCoordinator;
+mapping(uint256 => bool) public pending;
+function rawFulfillRandomWords(uint256 requestId, uint256[] memory words) external {
+    require(msg.sender == vrfCoordinator); // swapped coordinator can fulfill OLD requests
+    require(pending[requestId]);
+    _consume(requestId, words);
+}
+
+// GOOD — bind each request to the provider that originated it
+mapping(uint256 => address) public requestProvider;
+function rawFulfillRandomWords(uint256 requestId, uint256[] memory words) external {
+    require(msg.sender == requestProvider[requestId], "wrong provider"); // only the originator can fulfill
+    _consume(requestId, words);
+}
+```
