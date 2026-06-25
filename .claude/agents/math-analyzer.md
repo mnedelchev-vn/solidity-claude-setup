@@ -432,3 +432,36 @@ function removeLiquidity(uint256 lpAmount) {
     uint256 tokenReturned = Math.mulDiv(lpAmount, tokenReserve, totalLP); // rounds DOWN — safe
 }
 ```
+
+### Case 39: Fixed-point downcast wraps to near-zero at saturation (ratio → 1)
+A Q-format fixed-point downcast such as `uint64((x << 64) / y)` wraps *toward zero* precisely when the ratio `x / y` approaches or exceeds `1` — the exact high end of the domain where the value should be *capped*, not collapsed. This is distinct from the generic truncation in Case 8: the danger here is not that an arbitrary large value loses its low bits, but that a rate/fee/utilization multiplier which is supposed to **saturate to the target type's max** instead silently becomes `~0`. At full utilization a borrow-rate or fee multiplier that should hit its ceiling reads as essentially free, inverting the protocol's intent. Check:
+- Whether the value is clamped to `type(uintN).max` (or the documented Q-format ceiling) **before** the downcast at the high end of its domain, rather than relying on the cast to saturate (it does not — it wraps)
+- Whether `x << 64` (or `x * 2**N`) can exceed `y * type(uint64).max`, the point past which the shifted ratio no longer fits in the target type
+- Whether a saturation/utilization input at or near `100%` produces a multiplier of `~0` instead of the intended maximum
+```solidity
+// BAD — at saturation (x/y → 1) the Q64.64 value overflows uint64 and wraps to ~0
+// e.g. x = 1e18, y = 1e18  →  (x << 64) / y == 2^64, which truncates to 0 in uint64
+uint64 rateMultiplier = uint64((utilization << 64) / capacity);
+
+// GOOD — cap to the type/Q-format ceiling BEFORE downcasting
+uint256 q = (utilization << 64) / capacity;
+uint64 rateMultiplier = q > type(uint64).max ? type(uint64).max : uint64(q);
+```
+
+### Case 40: Wrong comparator at the sole-occupant / distinguish-from-zero boundary
+A strict `<` or `>` guard on a participant count, pool size, or index bound silently excludes the single-occupant / first-element case, where the inclusive `<=` or `>=` is the correct comparator. When a check must distinguish "exactly one" from "zero or many", an off-by-one in the comparator lets the lone participant bypass a check or get mis-credited. This is a comparator-boundary bug, not a division mechanism — `require(count < n)` or `if (n < 1)` written where `<=` / `>= 1` was meant excludes the boundary element. Check:
+- Whether every count/size/index comparison that must include the boundary element uses the inclusive comparator (`<=`, `>=`) rather than the strict one
+- Whether the sole participant (`count == 1`) is handled by the same branch intended for them, e.g. `if (n < 1)` (only `n == 0`) vs `if (n <= 1)` (also the lone participant)
+- Whether a "first depositor" / "last remaining" / "only voter" path is reachable, or is silently skipped by a strict bound
+```solidity
+// BAD — meant to catch "no other participants", but excludes the single remaining one
+// with participants == 1, `participants < 1` is false, so the lone user bypasses the check
+if (participants < 1) {
+    _settleSoloCase();   // never runs for participants == 1
+}
+
+// GOOD — include the sole-occupant boundary
+if (participants <= 1) {
+    _settleSoloCase();   // runs for both 0 and the lone participant, as intended
+}
+```
