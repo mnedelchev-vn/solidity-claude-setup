@@ -396,3 +396,23 @@ uint256 expectedSynth = oracle.getExpectedAmount(tokenIn, SUSD, amountIn);
 uint256 synthAmount = synthetix.exchange(tokenIn, amountIn, SUSD);
 require(synthAmount >= expectedSynth * (1e18 - slippageBps) / 1e18, "hop 1 slippage");
 ```
+
+### Case 28: Commutativity break — A→B vs B→A produce different state (orderable for MEV)
+Distinct from the sandwich/front-run cases above (which insert an attacker action around a victim): here two INDEPENDENT actions that can legitimately occur in either order within the same block leave DIFFERENT protocol state depending on which executes first. Because both are valid and either can be sequenced first, an attacker (often via the proposer or a bundle) simply selects the ordering that is more profitable for them — no victim transaction or price manipulation is required. The fix is to make the action pair commutative (settle/checkpoint shared state before either action mutates it) so ordering is irrelevant. Check:
+- Whether pairs of independent actions that touch shared accounting — `harvest()` + `deposit()`, two users' `deposit()`s, `swap()` + `rebalance()`, `accrueRewards()` + `claim()`, `updateIndex()` + `withdraw()` — produce identical final state regardless of order
+- Whether the profitable ordering can be chosen by the attacker (i.e., whether the action that injects/distributes value can be reordered relative to the action that captures it, with no per-second accrual or snapshot to neutralize the gap)
+- Whether reward/index/share-price state is checkpointed BEFORE any balance-mutating action, so that `A then B` and `B then A` converge to the same indices and balances
+- Whether the protocol relies on an implicit "expected" ordering (e.g., harvest is "supposed" to run before deposits in a block) that is not actually enforced on-chain
+- For each orderable independent pair, test that `A→B` and `B→A` diverge; if they do, confirm the attacker cannot select the profitable order (no permissionless trigger, locked snapshot, or per-time accrual blocks the choice)
+```solidity
+// BAD — harvest and deposit are non-commutative: depositing BEFORE harvest in the same
+// block captures the harvested yield; depositing AFTER does not. Attacker picks the order.
+function harvest() external { totalAssets += _collect(); }          // share price jumps
+function deposit(uint256 a) external { _mint(msg.sender, a * totalSupply / totalAssets); totalAssets += a; }
+// orderProfit: deposit -> harvest  != harvest -> deposit  (attacker chooses deposit-first)
+
+// GOOD — checkpoint accrual before any balance change so the pair commutes
+function harvest() external { _accrue(); rewardRate = _collect() / PERIOD; }
+function deposit(uint256 a) external { _accrue(); _mint(msg.sender, _toShares(a)); totalAssets += a; }
+// deposit and harvest now converge to identical state in either order
+```
