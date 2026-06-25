@@ -280,3 +280,53 @@ State-synchronization functions (snapshots, checkpoints, reward updates, debt re
 - Whether functions named `checkpoint_*`, `updateDebtReporting`, `updateSystemSnapshots`, `RM_UpdateReward`, `afterLockUpdate`, `epochEmission`, or similar are protected by a role or `onlyOwner` modifier
 - Whether calling these functions out of sequence or with crafted arguments can inflate balances, skip emissions, or front-run legitimate callers for profit
 - Whether permissionless versions of accounting functions allow deposit-then-trigger patterns that capture inflated rewards in the same transaction
+
+### Case 24: Inconsistent guards across multiple writers of the same storage variable
+A critical storage variable is protected on its obvious setter but reachable through a second, weaker-guarded path — an unguarded `external configure()`, an inherited override, or an internal helper exposed by a differently-guarded entry point. The attacker simply writes the protected variable through the weakest writer. The audit move is to **enumerate every writer of each critical variable, not the modifier on each function**. Check:
+- For every critical storage variable (oracle, owner, fee recipient, price source, implementation, role mapping), list all functions that write to it — directly, via an internal helper, or via an inherited/overridden function
+- Whether all of those writers share the same access control; if one path is `onlyOwner` and another is `external` or `public` with no check, the variable is effectively unprotected
+- Whether an internal `_setX()` is reachable from any external function whose guard is weaker than the canonical `setX()`'s guard
+- Whether base-contract or overridden functions re-expose a setter that the derived contract believed was locked down
+```solidity
+// BAD — setOracle() is guarded, but configure() writes the same variable unguarded
+address public oracle;
+
+function setOracle(address o) external onlyOwner {
+    _setOracle(o);
+}
+function configure(address o) external {        // no modifier
+    _setOracle(o);                              // attacker sets a malicious oracle
+}
+function _setOracle(address o) internal {
+    oracle = o;
+}
+
+// GOOD — every writer goes through the same guard
+function setOracle(address o) external onlyOwner { _setOracle(o); }
+function configure(address o) external onlyOwner { _setOracle(o); }
+```
+
+### Case 25: Confused deputy — privileged/custody contract acts on the attacker's behalf
+When contract A holds approvals, roles, or trust on contract B, an unguarded path can make A perform a call using **A's own authority** while the attacker chooses the effect. This covers forwarders, `execute(target, data)`, callback handlers, and multicall. The defining test: can an arbitrary caller make a trusted contract choose the `target`, `calldata`, or `recipient` of a call it performs with privileges the caller does not have? Check:
+- Whether contracts that hold token approvals, are themselves approved spenders/operators, or hold a privileged role on another contract expose any unguarded function that lets a caller spend or exercise that authority
+- Whether functions that forward calls to a privileged contract B let an arbitrary caller choose the `target`, `calldata`, or `recipient`
+- Whether callback/hook handlers (`onTokenTransfer`, `onFlashLoan`, relayer/forwarder entry points) re-enter and act with the contract's own permissions on caller-supplied parameters
+- Whether `multicall`/`aggregate` lets a caller chain a sub-call that the contract would never expose as a standalone external function
+
+**Sub-note — permissionless custody arbitrary-call variant:** the most direct instance is a contract holding tokens/NFTs that exposes a caller-controlled external call where the attacker supplies **both** the `target` and the `calldata`. The attacker points `target` back at a held-asset contract and calls `transfer` / `approve` / `safeTransferFrom`, draining assets the custody contract holds or is approved over — using the custody contract's own authority. This is the permissionless boundary variant; the same mechanism behind a privileged-role arbitrary call (see Case 7's `delegatecall` notes) is the privileged variant. Check that any `address target, bytes data` call surface on a custody contract is restricted, and that `target` cannot be an asset the contract holds or has allowance over.
+```solidity
+// BAD — vault holds user tokens AND lets anyone pick target + calldata
+function execute(address target, bytes calldata data) external returns (bytes memory) {
+    (bool ok, bytes memory ret) = target.call(data);   // attacker: target = USDC,
+    require(ok);                                        // data = transfer(attacker, balance)
+    return ret;                                         // vault drains its own holdings
+}
+
+// GOOD — restrict the caller and forbid pointing back at held assets
+function execute(address target, bytes calldata data) external onlyOwner returns (bytes memory) {
+    require(!isHeldAsset[target], "no self-spend");
+    (bool ok, bytes memory ret) = target.call(data);
+    require(ok);
+    return ret;
+}
+```
