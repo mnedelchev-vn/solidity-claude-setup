@@ -314,6 +314,7 @@ When contract A holds approvals, roles, or trust on contract B, an unguarded pat
 - Whether `multicall`/`aggregate` lets a caller chain a sub-call that the contract would never expose as a standalone external function
 
 **Sub-note — permissionless custody arbitrary-call variant:** the most direct instance is a contract holding tokens/NFTs that exposes a caller-controlled external call where the attacker supplies **both** the `target` and the `calldata`. The attacker points `target` back at a held-asset contract and calls `transfer` / `approve` / `safeTransferFrom`, draining assets the custody contract holds or is approved over — using the custody contract's own authority. This is the permissionless boundary variant; the same mechanism behind a privileged-role arbitrary call (see Case 7's `delegatecall` notes) is the privileged variant. Check that any `address target, bytes data` call surface on a custody contract is restricted, and that `target` cannot be an asset the contract holds or has allowance over.
+
 ```solidity
 // BAD — vault holds user tokens AND lets anyone pick target + calldata
 function execute(address target, bytes calldata data) external returns (bytes memory) {
