@@ -50,6 +50,49 @@ After the selected subagents by the orchestration routing step are done analyzin
 
 After the classification step has been executed, next in line is to perform a legitimacy check of the reported vulnerabilities list. For each one of the existing issues in the reported list there is a spawn of a dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagent meaning that if after the classification step there are 10 issues in the reported list then 10 separate independent subagents are going to be spawned. Each one of them with a clear context window and questioning the legitimacy of the issues. The core reason for this step is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
+## Architecture
+
+The whole orchestration at a glance — the skill _(Level 0)_ drives three non-excludable local agents _(Level 1)_; only the `orchestrator` fans out, routing to a **selected subset** of the 33 vulnerability subagents _(Level 2)_ before the report is classified and independently verified:
+
+```mermaid
+flowchart TD
+    SKILL(["🛡️ /smart-contract-analyzer<br/><b>Level 0 · Skill (entry point)</b>"])
+    ORCH["🧭 orchestrator<br/><i>Level 1 · local agent — crawls & routes</i>"]
+    CLASS["⚖️ classifier<br/><i>Level 1 · local agent — severity · dedupe · false-alarm</i>"]
+    INDEP["🔍 independent-analyzer ×N<br/><i>Level 1 · local agent — 1 fresh context per surviving issue</i>"]
+    OUT(["📋 Final vulnerability report"])
+
+    subgraph POOL["🕵️ Level 2 · 33 vulnerability subagents · .claude/agents/ &nbsp;(flat pool — grouped for readability)"]
+      direction TB
+      G1["<b>Low-level &amp; core safety · 5</b><br/>math-analyzer<br/>yul-assembly-analyzer<br/>data-validation-analyzer<br/>timestamp-time-dependence-analyzer<br/>state-management-analyzer"]
+      G2["<b>Access, privilege &amp; upgrade · 5</b><br/>access-control-analyzer<br/>centralization-privilege-analyzer<br/>upgrade-proxy-analyzer<br/>governance-analyzer<br/>signature-verification-analyzer"]
+      G3["<b>External-call &amp; MEV · 5</b><br/>reentrancy-analyzer<br/>dos-analyzer<br/>frontrunning-analyzer<br/>flashloan-analyzer<br/>cross-chain-analyzer"]
+      G4["<b>Tokens, ETH &amp; oracles · 4</b><br/>token-compatibility-analyzer<br/>eth-native-handler-analyzer<br/>nft-marketplace-analyzer<br/>oracle-analyzer"]
+      G5["<b>Accounting, shares &amp; funds · 6</b><br/>fee-accounting-analyzer<br/>reward-accounting-analyzer<br/>vault-share-accounting-analyzer<br/>donation-attack-analyzer<br/>lock-funds-analyzer<br/>merkle-airdrop-claims-analyzer"]
+      G6["<b>Protocol-specific modules · 8</b><br/>lending-protocol-analyzer<br/>liquidation-analyzer<br/>amm-dex-analyzer<br/>perpetual-derivatives-analyzer<br/>liquid-staking-restaking-analyzer<br/>withdrawal-queue-redemption-analyzer<br/>vesting-streaming-analyzer<br/>auction-mechanism-analyzer"]
+    end
+
+    SKILL -- "Step 1 · spawn" --> ORCH
+    ORCH -- "routes to a selected subset (not all 33)" --> POOL
+    POOL -- "Step 2 · raw findings" --> CLASS
+    CLASS -- "Step 3 · deduped + ranked" --> INDEP
+    INDEP -- "Step 4 · false positives removed" --> OUT
+
+    classDef skill fill:#1f6feb,stroke:#0d419d,color:#fff;
+    classDef local fill:#1a7f37,stroke:#116329,color:#fff;
+    classDef out fill:#8250df,stroke:#6639ba,color:#fff;
+    classDef g1 fill:#eef1f4,stroke:#57606a,color:#24292f;
+    classDef g2 fill:#ffebe9,stroke:#cf222e,color:#24292f;
+    classDef g3 fill:#fff1e5,stroke:#bc4c00,color:#24292f;
+    classDef g4 fill:#e6f6f4,stroke:#0f7c74,color:#24292f;
+    classDef g5 fill:#eeeefc,stroke:#4646c9,color:#24292f;
+    classDef g6 fill:#e6f4ea,stroke:#1a7f37,color:#24292f;
+    class SKILL skill;
+    class ORCH,CLASS,INDEP local;
+    class OUT out;
+    class G1 g1; class G2 g2; class G3 g3; class G4 g4; class G5 g5; class G6 g6;
+```
+
 > [!NOTE]  
 > Each subagent has explicitly defined allowed tools — `tools: Glob, Grep, Read, Bash` _( read-only access )_. Access to `Write` or `Edit` tools is denied.
 
