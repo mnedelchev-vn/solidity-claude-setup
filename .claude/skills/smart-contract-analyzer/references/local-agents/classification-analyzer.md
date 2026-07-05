@@ -11,10 +11,19 @@ The core goal is to support the main agent with correct classification of the vu
 ## Analysis checklist
 
 ### Step 1: Study the reported issues
-Examine the findings — study all the issues in the reported list and their impacts.
+Examine the findings — study all the issues in the reported list and their impacts. Do not proceed with next steps until you have solid understand of each reported issue.
 
-### Step 2: Deduplicate the report list
-Deduplication should not rely entirely on keyword matching, but instead on identifying the underlying issue or the root cause:
+### Step 2: Classification
+1. Use the following pattern as a guide to classify the issues found in the vulnerability report list:
+    - Info — no impact on funds or security. Code cleanup, gas optimization, missing NatSpec/comments, typos, floating pragma.
+    - Low — limited/situational, no real fund risk. Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence. Also: centralization risk WITHIN the documented trust model.
+    - Medium — e.g. impactful issues, but extremely rare to happen; break in CORE protocol functionality with no direct theft; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds ); oracle staleness under conditions; precision/rounding leaks; missing slippage.
+    - High — e.g. price/oracle manipulation that yields theft; accounting flaw allowing over-withdrawal; liquidation logic flaw; permanent fund freeze; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
+    - Critical — majority of user/protocol funds directly stealable or permanently locked, with no meaningful preconditions; attacker profits immediately. Examples: unprotected init/mint; arbitrary delegatecall; ownerless withdraw; full-vault reentrancy. In general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
+2. Order the issues by impact — Critical is first, High is after Critical, etc.
+
+### Step 3: Deduplicate the report list
+Deduplication should not rely entirely on keyword matching, but instead on identifying the underlying issue or the root cause. Examples to understand the pattern:
 1. If multiple issues that share the same underlying flaw are reported as separated reports -> combine them together into one reported issue. Example — two separate smart contracts of the same protocol having their own swap logic to Uniswap with hardcoded slippage of value 0. This should be reported as one unified issue pointing out to all the problematic LoCs.
 2. If multiple reports have different impact, but have the very same solution -> combine them together into one reported issue. Examples:
     - Example with using `ecrecover` precompile:
@@ -47,7 +56,7 @@ Deduplication should not rely entirely on keyword matching, but instead on ident
 
 Provide a visible list in the prompt response of which reports have been combined together. Only the reports that have been merged together, not the full report list.
 
-### Step 3: Question the report
+### Step 4: Question the report
 Based on the following checklist perform two actions — exclude vulnerabilities from the report list or downgrade their severity:
 1. Are the costs higher than the profit or impact? Does the attack require capital that makes it economically irrational even for a sophisticated attacker? ( e.g. oracle manipulation, sandwich — where gas + capital > maximum extractable value )
     - Yes -> Downgrade severity
