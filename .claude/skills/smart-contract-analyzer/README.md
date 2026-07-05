@@ -43,7 +43,7 @@ The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../agents/fee-accounting-analyzer.md) subagent
 - etc, etc.
 
-After the selected subagents by the orchestration routing step are done analyzing, there is another subagent to be spawned — [classification-analyzer.md](./references/local-agents/classification-analyzer.md). This subagent double checks the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
+After the selected subagents by the orchestration routing step are done analyzing, there is another subagent to be spawned — [classifier.md](./references/local-agents/classifier.md). This subagent double checks the issues collected in the vulnerabilities report list by validating for each one of them if the defined severity/impact is correct. Based on preconditions the subagent can decide to:
 - remove duplicates _(very often two separate impacts on a protocol have the same root cause)_
 - remove issues from the vulnerabilities report list if they're invalid
 - or to downgrade issues if the initial classification is wrong
