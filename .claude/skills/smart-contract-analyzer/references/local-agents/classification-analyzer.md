@@ -15,11 +15,38 @@ Examine the findings — study all the issues in the reported list and their imp
 
 ### Step 2: Classification
 1. Use the following pattern as a guide to classify the issues found in the vulnerability report list:
-    - Info — no impact on funds or security. Code cleanup, gas optimization, missing NatSpec/comments, typos, floating pragma.
-    - Low — limited/situational, no real fund risk. Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence. Also: centralization risk WITHIN the documented trust model.
-    - Medium — e.g. impactful issues, but extremely rare to happen; break in CORE protocol functionality with no direct theft; centralization risks; risks done by trusted role by the time of deployment or setter method; DOS without real impact on user or protocol funds ( no real impact or very low impact on funds ); oracle staleness under conditions; precision/rounding leaks; missing slippage.
-    - High — e.g. price/oracle manipulation that yields theft; accounting flaw allowing over-withdrawal; liquidation logic flaw; permanent fund freeze; funds being locked due to DOS; access control; attacks of stealing or locking user or protocol funds, but requiring significant amount of capital ( impact on contracts funds, but under set of conditions — no direct theft or lockup of funds )
-    - Critical — majority of user/protocol funds directly stealable or permanently locked, with no meaningful preconditions; attacker profits immediately. Examples: unprotected init/mint; arbitrary delegatecall; ownerless withdraw; full-vault reentrancy. In general аttacks that bring to the protocol’s end ( wide open impact on users or protocol funds meaning that the majority of funds can be directly stolen or locked )
+    - Info
+        - Code cleanup, gas optimization, missing NatSpec/comments, typos, floating pragma.
+        - Pure user errors that are fully preventable or manageable in the front-end (hard ceiling — never above Info).
+    - Low
+        - Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence.
+        - Centralization risk within the documented trust model. (Trusted/admin roles are trusted-by-default; on Sherlock this is often invalid rather than Low.)
+        - Issues that require admin/privileged access to trigger — cap at Low, UNLESS the protocol was explicitly designed to be resilient against that admin action (then classify by impact).
+        - Single-occurrence rounding / weird-token edge cases with no replay or compounding path.
+        - Griefing with no profit motive sits here by default
+    - Medium
+        - Break in recoverable CORE protocol functionality with no direct theft.
+        - Centralization risk that exceeds the documented trust model, but with limited impact; risk introduced by a trusted role at deployment time or via a setter.
+        - DOS meeting one of: (a) funds locked > 1 week, or (b) impairs availability of a time-sensitive function. (Both → High.) A sub-week DOS is judged on a single occurrence even if repeatable.
+        - Oracle staleness under conditions; missing slippage protection.
+        - Precision/rounding leaks that are bounded / one-shot (not indefinitely replayable).
+        - Loss floor as a tie-breaker: relevant loss > 0.01% AND > $10 of principal, yield, or protocol fees.
+    - High
+        - Price/oracle manipulation that yields theft; accounting flaw allowing over-withdrawal; liquidation logic flaw.
+        - Access control failure on a fund-moving or privileged function (cosmetic-setter access control is Low).
+        - Permanent freeze of a subset of funds, OR a majority freeze/theft that is gated by meaningful preconditions.
+        - Temporary freeze of a large share of funds.
+        - DOS meeting both Medium DOS criteria (funds locked > 1 week AND a time-sensitive function impaired).
+        - Irrecoverable break of core protocol functionality (no direct theft required).
+        - Small per-tx loss that is replayable/compoundable — treat as total loss and rate here (or Critical if majority + ungated).
+        - Theft or lockup of a significant-but-not-majority share of funds, OR majority impact gated by meaningful preconditions (large capital, specific state, precise timing, or a trusted actor misbehaving). Preconditions are the line between High and Critical.
+        - Loss floor: loss > 1% AND > $10 of principal, yield, or protocol fees.
+    - Critical
+        - Majority of user/protocol funds directly stealable or permanently locked, with no meaningful preconditions; attacker profits immediately.
+        - Unprotected init/mint; unauthorized minting of tokens/NFTs; arbitrary delegatecall; ownerless withdraw; full-vault reentrancy.
+        - Protocol insolvency / bad debt — accounting or collateral state that renders the protocol insolvent even without a clean "theft" event.
+        - Governance takeover / vote-result manipulation — double-voting, quorum bypass, execution without a voting step, direct vote manipulation. Critical because governance holds privileged access downstream, even before funds move.
+        - General framing: attacks that bring the protocol to its end — wide-open impact where the majority of user or protocol funds can be directly stolen or locked.
 2. Order the issues by impact — Critical is first, High is after Critical, etc.
 
 ### Step 3: Deduplicate the report list
