@@ -23,15 +23,18 @@ All of the command arguments listed below are off by default.
 ### Step 1 — Perform analysis through orchestration
 Spawn the [orchestrator.md](./references/local-agents/orchestrator.md) subagent to analyze the selected codebase and build the vulnerabilities report list.
 
-### Step 2 — Vulnerabilities classification
-Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by Step 1 orchestration.
+### Step 2 — Docs compliance
+Spawn the [compliance-check.md](./references/local-agents/compliance-check.md) subagent to perform a compliance between doc files /readmes /compliance files and the actual code.
 
-### Step 3 — Report list legitimacy check
-Spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 2 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them focuses only on **one** issues and it should validate the legitimacy of that particular issue.
+### Step 3 — Vulnerabilities classification
+Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by Step 1 and Step 2.
 
-The core reason for Step 3 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+### Step 4 — Report list legitimacy check
+Spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 4 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them focuses only on **one** issues and it should validate the legitimacy of that particular issue.
 
-### Step 4 — Output report
+The core reason for Step 4 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+
+### Step 5 — Output report
 1. Output in the terminal the final clean vulnerability report list in a bordered table with the following structure:
     | Severity | Contract | Line(s) | Subagent | Summary | Impact | Attack path | Recommendation |
     |:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
