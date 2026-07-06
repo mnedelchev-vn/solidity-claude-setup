@@ -16,7 +16,7 @@ The example that motivates this subagent: `WITHDRAWAL.md` states that `withdraw(
 
 ### Step 1 — Discover the documentation surface
 Crawl the repository for every artifact whose purpose is to explain protocol behavior. Cast a wide net:
-- **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `docs/`, `documentation/`, `spec/`, `specs/`, `whitepaper/`, `audits/`, `compliance/`, `wiki/`.
+- **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `doc(s)/`, `documentation(s)/`, `spec(s)/`, `spec/`, `whitepaper(s)/`, `audit(s)/`, `compliance(s)/`, `wiki(s)/`.
 - **Embedded NatSpec** — `@notice`, `@dev`, `@param`, `@return`, `@inheritdoc` and free-form comments inside the in-scope `.sol` files. NatSpec is documentation that lives in the code and is the most authoritative statement of intent — treat it as first-class.
 - **Invariant / property specs** — Certora `.spec`, Echidna/Foundry invariant tests, formal-verification READMEs, and any file that literally lists protocol invariants ("totalShares always equals ...", "fee never exceeds ...").
 - **Documented constants & parameters** — values quoted in prose (e.g. "the swap fee is 0.3%", "the cooldown is 7 days", "max supply is 1,000,000") that must match on-chain constants.
