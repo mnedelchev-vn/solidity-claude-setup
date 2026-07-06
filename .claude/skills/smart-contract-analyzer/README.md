@@ -58,6 +58,7 @@ The whole orchestration at a glance — the skill _(Level 0)_ drives three non-e
 flowchart TD
     SKILL(["🛡️ /smart-contract-analyzer<br/><b>Level 0 · Skill (entry point)</b>"])
     ORCH["🧭 orchestrator<br/><i>Level 1 · local agent — crawls & routes</i>"]
+    COMPL["📑 compliance-check<br/><i>Level 1 · local agent — docs ↔ code consistency</i>"]
     CLASS["⚖️ classifier<br/><i>Level 1 · local agent — severity · dedupe · false-alarm</i>"]
     INDEP["🔍 independent-analyzer ×N<br/><i>Level 1 · local agent — 1 fresh context per surviving issue</i>"]
     OUT(["📋 Final vulnerability report"])
@@ -73,8 +74,10 @@ flowchart TD
     end
 
     SKILL -- "Step 1 · spawn" --> ORCH
+    SKILL -- "Step 2 · spawn" --> COMPL
     ORCH -- "routes to a selected subset (not all 33)" --> POOL
-    POOL -- "Step 2 · raw findings" --> CLASS
+    POOL -- "raw findings" --> CLASS
+    COMPL -- "doc ↔ code findings" --> CLASS
     CLASS -- "Step 3 · deduped + ranked" --> INDEP
     INDEP -- "Step 4 · false positives removed" --> OUT
 
@@ -88,7 +91,7 @@ flowchart TD
     classDef g5 fill:#eeeefc,stroke:#4646c9,color:#24292f;
     classDef g6 fill:#e6f4ea,stroke:#1a7f37,color:#24292f;
     class SKILL skill;
-    class ORCH,CLASS,INDEP local;
+    class ORCH,COMPL,CLASS,INDEP local;
     class OUT out;
     class G1 g1; class G2 g2; class G3 g3; class G4 g4; class G5 g5; class G6 g6;
 ```
