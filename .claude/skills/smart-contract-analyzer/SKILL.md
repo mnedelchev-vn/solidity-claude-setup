@@ -24,7 +24,7 @@ All of the command arguments listed below are off by default.
 Spawn the [orchestrator.md](./references/local-agents/orchestrator.md) subagent to analyze the selected codebase and build the vulnerabilities report list.
 
 ### Step 2 — Docs compliance
-Spawn the [compliance-check.md](./references/local-agents/compliance-check.md) subagent to perform a compliance between doc files /readmes /compliance files and the actual code.
+Spawn the [compliance-check.md](./references/local-agents/compliance-check.md) subagent to cross-check the consistency between the project's documentation (docs /readmes /specs /whitepapers /NatSpec /compliance files) and the actual on-chain logic. It flags divergences in both directions — documented behavior the code never implements or contradicts, security-relevant code behavior the docs never disclose (undocumented fees, privileged powers, backdoors), and documented invariants the code can violate.
 
 ### Step 3 — Vulnerabilities classification
 Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by Step 1 and Step 2.
