@@ -268,3 +268,27 @@ function setStrategy(address s) external onlyOwner {
     strategy = s;
 }
 ```
+
+### Case 21: Selective-revert to reject an unfavorable determined outcome (callback re-roll)
+When a protocol determines a value-bearing outcome (random NFT rarity, reward amount, allocation, liquidation share, lottery result) and THEN hands control to a recipient that may be a contract — via `_safeMint`/`onERC721Received`, `onERC1155Received`, an ETH push (`receive()`/`fallback()`), an ERC777 `tokensReceived` hook, or any post-outcome callback — the recipient can inspect the outcome and `revert` to roll back the whole transaction when it is unfavorable, then retry until the outcome is favorable. This is NOT classic reentrancy: `nonReentrant` does NOT prevent it, because the attacker reverts the transaction (state rolls back) instead of re-entering; on the next attempt, block state / RNG / queue position may differ and yield a better result. Check:
+- Whether any outcome that varies in value is COMMITTED (written to state) or COMPUTED before an external call/callback to a party who benefits from it
+- Whether the recipient of a `_safeMint`/`safeTransferFrom`/ETH-push can observe the outcome (return value, emitted event, readable storage) and revert to reject it
+- Whether retrying is cheap and the outcome differs across attempts (different block, different `prevrandao`, different queue state) — making `gas_per_retry * E[retries] < value_of_favorable_outcome` a profitable attack
+- Whether the design uses commit-reveal, pull-over-push (recipient must claim, cannot reject), or a two-step request/settle that separates outcome determination from delivery so a revert cannot re-roll
+- Whether "randomness" or allocation is consumed in the same transaction as delivery rather than snapshotted and delivered in a later, non-revertable step
+```solidity
+// BAD — rarity is determined, then _safeMint hands control to the minter,
+// who reverts in onERC721Received whenever the rolled rarity is common, and retries.
+function mint() external {
+    uint256 rarity = _rollRarity(block.prevrandao); // outcome determined
+    uint256 id = _assign(rarity);
+    _safeMint(msg.sender, id); // attacker's onERC721Received reverts if rarity is low
+}
+
+// GOOD — pull-over-push + commit-reveal: outcome is settled in a step the recipient cannot reject
+function requestMint() external { requests[msg.sender] = block.number + 1; } // commit
+function claimMint() external {
+    uint256 seed = uint256(blockhash(requests[msg.sender])); // revealed later
+    _mint(msg.sender, _assign(_rollRarity(seed))); // _mint has no receiver callback; no re-roll
+}
+```
