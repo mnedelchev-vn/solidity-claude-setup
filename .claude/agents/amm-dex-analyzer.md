@@ -332,3 +332,25 @@ Balancer Composable/Boosted pools mint BPT to themselves as a "pre-minted" reser
 - Whether `virtualSupply()` is used for older MetaStable / BoostedPool implementations
 - Whether the protocol distinguishes between pool types before choosing the supply function
 - Whether LP token valuation formulas that divide by total supply are tested against pools that have pre-minted BPT
+
+### Case 28: StableSwap / Curve fork invariant-implementation compliance
+Forks of Curve/StableSwap (detectable via `get_d`, `get_y`, `get_y_d`, `ramp_a`, `A_PRECISION`, `RATE_MULTIPLIER`, `get_virtual_price`, `calc_withdraw_one_coin`, `remove_liquidity_imbalance`) frequently port the invariant math incorrectly, mispricing swaps and LP shares even though the surface API looks right. These bugs are specific to the StableSwap invariant and are not caught by the generic AMM checks above. Check:
+- **Solver convergence**: Newton-Raphson loops (`get_d`, `get_y`) must assert convergence after the iteration limit (Curve does `assert converged`). A fork that drops this and silently returns the last approximation on non-convergence produces wrong `D`/`y` → mispriced swaps and exploitable deposit/withdraw amounts. Confirm the loop reverts (not returns) on non-convergence.
+- **Amplification encoding**: Curve stores `A` pre-multiplied (`A * A_PRECISION`) and uses `ann = A * N_COINS`. A common fork bug stores the raw `A` then computes `ann` off by a factor of `N_COINS^(N_COINS-1)` (2x for N=2, 9x for N=3, 64x for N=4) — check `initialize`, `A()`/`get_a()`, and `ramp_a` all use the SAME encoding.
+- **Reserve decimal normalization**: reserves must be scaled to a common precision (`RATE_MULTIPLIER`/`PRECISION_MUL`) before the invariant is computed. A fork that assumes all coins share decimals (or drops the multiplier) mis-weights a 6- or 8-decimal coin against an 18-decimal coin (up to a 10^N pricing error). Confirm raw balances are never passed straight into `get_d`/`get_y`.
+- **Fee application**: `admin_fee` must be a fraction of the trading fee (not an absolute rate); imbalance fees on deposit/withdraw must be symmetric; `withdraw_admin_fees` must not let `donate_admin_fees`-style paths shift the exchange rate.
+- **Known Curve exploit patterns**: read-only reentrancy via `get_virtual_price()` during `remove_liquidity` (guarded in Curve — cross-check the reentrancy analyzer), `remove_liquidity_imbalance` fee bypass, and `ramp_a` manipulation while positions are open (needs min ramp duration / max A change).
+```solidity
+// BAD — no convergence assertion; returns last iterate, and ann uses raw A (off by N^(N-1))
+function getD(uint256[] memory xp, uint256 a) internal pure returns (uint256 d) {
+    uint256 ann = a * N_COINS;              // WRONG if `a` is raw, not A*A_PRECISION
+    for (uint256 i = 0; i < 255; i++) { /* Newton step */ }
+    return d;                               // no `require(converged)` — silent bad D
+}
+
+// GOOD — Curve-faithful encoding + convergence revert + decimal normalization
+uint256 ann = (a) * N_COINS;                // `a` already A*A_PRECISION
+uint256[] memory xp = _xp(balances, rateMultipliers); // normalize decimals first
+// ... Newton loop ...
+require(_converged(d, dPrev), "no convergence");
+```
