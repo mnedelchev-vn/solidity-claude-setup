@@ -127,7 +127,7 @@ function depositWithPermit(
 ```
 
 ### Case 6: Using ecrecover precompile is dangerous
-1. Signature malleability - precompile `ecrecover` should not be used directly, because in the ECDSA elliptic curve for every `r`, `s`, `v` there is another coordinate which returns the same valid result. OZ’s ECDSA library fixed this by restricting `s` to be in the upper range.
+1. Signature malleability - precompile `ecrecover` should not be used directly, because in the ECDSA elliptic curve for every `r`, `s`, `v` there is another coordinate which returns the same valid result. OZ’s ECDSA library fixed this by restricting `s` to be in the upper range and `v` to be 27 or 28.
 
 2. Precompile `ecrecover` by default doesn't revert and returns zero address if there is something wrong with the signature, for example hash not corresponding to the signature. Attackers could manipulate a signature to look like it was signed by a zero address so address(0) == ecrecover(digest, v, r, s); condition will be true. This is fixable by validating that the output of ecrecover is not a zero address. This issue is also covered in the OZ’s ECDSA library.
 
