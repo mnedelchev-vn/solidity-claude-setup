@@ -304,3 +304,34 @@ function rawFulfillRandomWords(uint256 requestId, uint256[] memory words) extern
     _consume(requestId, words);
 }
 ```
+
+
+### Case 23: Governance parameter goes stale mid-flight across a multi-transaction user operation
+Distinct from Case 17 (which settles GLOBAL accrual before a rate change) and Case 22 (which binds a request to its ORIGINATING provider): here a single user operation spans multiple transactions (request → wait → claim, deposit → lock → withdraw, propose → queue → execute), and a governance-changeable parameter is read/snapshotted at the FIRST step and consumed at the LAST step. If governance changes that parameter during the wait window and the final step neither re-reads it nor honors the snapshot consistently, the user is settled against a value that no longer reflects either the terms they entered under or the current policy. BOTH directions must be modeled — an increase and a decrease usually have different victims. Check:
+- Whether parameters read at step 1 (`withdrawDelay`, `cooldownPeriod`, `unbondingPeriod`, `exchangeRate`, `feeBps`, `penaltyRate`, `claimDeadline`) are re-validated or re-read at the completing step, or silently cached in the request struct
+- Whether a DECREASE mid-flight lets a user finish early / pay less than the policy in force at completion (e.g., `withdrawDelay` cut while a withdrawal is pending → claim before the intended time)
+- Whether an INCREASE mid-flight retroactively traps or overcharges users already in-flight (e.g., `unbondingPeriod` or `penaltyRate` raised after they committed, with no grandfathering)
+- Whether a fee/rate change applies RETROACTIVELY to an already-initiated operation rather than only to operations started after the change
+- Whether the design pins the parameter into the request at initiation (snapshot-and-honor) OR always uses the current value at completion — and whether that choice is applied consistently on every path (the bug is usually a mix: some fields snapshotted, others read live)
+- Whether a maximum bound / timelock on the parameter limits the staleness impact, and whether the user can cancel-and-reinitiate to escape unfavorable mid-flight changes
+```solidity
+// BAD — delay is read live at claim; governance can shrink it while a withdrawal is pending,
+// letting a user claim earlier than the terms they requested under (and vice versa for an increase).
+function requestWithdraw(uint256 shares) external {
+    reqs[msg.sender] = Req(shares, block.timestamp); // start time pinned, delay NOT pinned
+}
+function claim() external {
+    require(block.timestamp >= reqs[msg.sender].start + withdrawDelay, "too early"); // withdrawDelay may have changed
+    _payout(reqs[msg.sender].shares);
+}
+
+// GOOD — pin the parameter into the request (snapshot-and-honor), or explicitly re-validate both sides
+function requestWithdraw(uint256 shares) external {
+    reqs[msg.sender] = Req(shares, block.timestamp, withdrawDelay); // delay snapshotted at request
+}
+function claim() external {
+    Req memory r = reqs[msg.sender];
+    require(block.timestamp >= r.start + r.delay, "too early"); // honored consistently
+    _payout(r.shares);
+}
+```
