@@ -299,3 +299,55 @@ Protocols that hardcode a very tight slippage tolerance (e.g., 0.33% or 0.99%) f
 - Whether the hardcoded tolerance is so tight that routine price movements cause all such transactions to revert
 - Whether the slippage check is applied to intermediate calculations (e.g., flash-loan repayment, multi-hop swap) where rounding makes exact matches impossible
 - Whether there is a governance function to update slippage parameters, and whether that function can itself be DoS'd
+
+### Case 29: Infrastructure-address targeting via on-behalf-of functions
+Distinct from Case 17 / Case 23 (which target a VICTIM USER's account): here the target is a PROTOCOL-OWNED infrastructure address — a router, vault, factory, strategy, fee collector, treasury, pair/pool, or an authority contract. Any public function that writes state KEYED BY an arbitrary address parameter (`depositFor`, `stakeFor`, `lockFor`, `delegateTo`, `mintFor`, `createFor`) can be called with an infrastructure address as the target, imposing state (a cooldown, a lock, a position, a queue entry, a non-zero balance, a flag) on a contract that was never meant to hold it — and thereby breaking the operations that infrastructure performs for everyone. Check:
+- Whether any `xFor(address target, ...)` / on-behalf-of function can be called with a protocol contract (router, vault, treasury, fee collector, pool, strategy) as `target`
+- Whether imposing a cooldown/lock/warmup on the infrastructure address blocks a function the protocol itself must call (e.g., a strategy that must `harvest()` but is now in an unexpired lock)
+- Whether creating a position/balance/delegation FOR the infrastructure address corrupts accounting that assumes that address holds none (fee-collector balance counted as user deposits, treasury added to a rewards distribution, router given voting power)
+- Whether the imposed state is reversible, by whom, and at what cost — compute `attacker_cost / protocol_damage`; a near-free grief that halts a core component is HIGH severity
+- Whether breaking one infrastructure component cascades (disabling a router blocks all swaps → all dependent vaults), and whether the damage is permanent, time-bound, or admin-fixable
+- Whether the function whitelists valid targets, requires the target's consent, or forbids protocol-owned addresses as `target`
+```solidity
+// BAD — anyone can impose a 7-day cooldown on the pool contract itself, freezing pool operations
+function stakeFor(address account, uint256 amount) external {
+    cooldownUntil[account] = block.timestamp + 7 days; // account == poolAddress → pool now frozen
+    _pull(msg.sender, amount);
+    balances[account] += amount;
+}
+
+// GOOD — restrict on-behalf-of targets (consent or non-infrastructure), or don't gate infra ops on per-address state
+function stakeFor(address account, uint256 amount) external {
+    require(!isProtocolAddress[account], "invalid target");
+    // ...
+}
+```
+
+### Case 30: Counter-based gate satisfied by zero-value / negligible entries
+A `count >= minimum` gate is meant to guarantee that a downstream computation has "enough" real inputs, but if entries that increment the counter can carry zero or negligible value, an attacker satisfies the count while the guarded computation is left meaningless or manipulable. The gate passes; the thing it was protecting does not hold. This is not quota exhaustion (Case 25) — it is gate INTEGRITY. Note: when the guarded computation is a price/TWAP, this is also an oracle-integrity concern (cross-check the oracle analyzer). Check:
+- Whether any gate of the form `require(count >= N)` counts entries that can contribute zero or dust value to the computation it guards (e.g., a TWAP requiring `validSnapshots >= 2` that accepts snapshots with `weight == 0`, so the average is effectively computed from one real data point)
+- Whether governance quorum / proposal-threshold counters can be satisfied by zero-weight or self-cancelling votes/participants
+- Whether a "minimum N participants / N confirmations / N observations" check validates the QUALITY of each entry (non-zero weight, distinct source, minimum stake) or only the COUNT
+- Whether an attacker can cheaply inject the counting entries (permissionless snapshot push, 1-wei stake, dust deposit, duplicate/sybil source) to cross the threshold without adding real value
+- Whether the guarded computation would produce a materially different result if the zero/dust entries were excluded — if yes, the gate is bypassable and the output manipulable
+- Whether the fix validates aggregate weight/value (`require(totalWeight >= W)`) or per-entry minimums rather than a bare count
+```solidity
+// BAD — gate counts snapshots, not their weight; attacker pushes a weight-0 snapshot to
+// satisfy `>= 2` and make the "TWAP" computable from a single real observation.
+function pushSnapshot() external { snapshots.push(Snapshot(spotPrice(), weightOf(msg.sender))); } // weight can be 0
+function twap() public view returns (uint256) {
+    require(snapshots.length >= 2, "need 2 snapshots"); // count-only gate
+    return _weightedAvg(snapshots); // dominated by the one non-zero-weight entry
+}
+
+// GOOD — gate on aggregate weight / reject zero-value entries
+function pushSnapshot() external {
+    uint256 w = weightOf(msg.sender);
+    require(w > 0, "zero weight");
+    snapshots.push(Snapshot(spotPrice(), w));
+}
+function twap() public view returns (uint256) {
+    require(_totalWeight(snapshots) >= MIN_WEIGHT, "insufficient weight"); // integrity, not count
+    return _weightedAvg(snapshots);
+}
+```
