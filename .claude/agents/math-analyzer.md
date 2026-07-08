@@ -465,3 +465,22 @@ if (participants <= 1) {
     _settleSoloCase();   // runs for both 0 and the lone participant, as intended
 }
 ```
+
+### Case 41: Fixed-point helper operand-scale mismatch (dimensional analysis)
+Cases 9/10/18/27/29/33 flag decimal and scale bugs at specific sites. This case adds the SYSTEMATIC dimensional check for fixed-point helpers (`mulWad`/`divWad`, `rayMul`/`rayDiv`, `mulDiv`, `FullMath.mulDiv`, Solady/Solmate `FixedPointMathLib`): each helper implies a REQUIRED scale for its operands, and the output scale is a deterministic function of the operand scales. Passing an operand at the wrong scale (most commonly an 8-decimal Chainlink price or a 6-decimal stablecoin amount into an 18-decimal WAD helper) mis-prices by orders of magnitude while the formula "looks" correct. Track a scale for every operand and verify it against the helper's contract and the consumer's expectation. Check:
+- `mulWad(a, b)` (= `a * b / 1e18`) requires BOTH operands at 1e18. A Chainlink 8-dec price passed as `a` yields a result 10^10 too small; a 6-dec USDC amount yields 10^12 too small. Confirm every operand is upscaled to WAD first (`price * 1e10`, `amount * 1e12`).
+- `rayMul`/`rayDiv` require RAY (1e27) operands; mixing a WAD operand under-scales by 10^9.
+- `mulDiv(a, b, c)` output scale = `a_scale + b_scale - c_scale`. Verify that equals the scale the CONSUMER of the result assumes (a value stored into a `*Wad`-named variable must actually be 1e18).
+- Addition/subtraction operands must share BOTH dimension and scale — a `price*amount` product added to a raw `amount` is a scale mismatch even if types match.
+- Runtime `decimals()` used directly in arithmetic without caching/normalizing at EVERY call site (one normalized site and one un-normalized site produce inconsistent results).
+- Entry/exit normalization symmetry: a deposit normalized to internal scale must be denormalized by the same factor on withdrawal (missing one side, or applying it twice, both corrupt accounting).
+- Boundary substitution to prove the bug: `mulWad(1e6 /*1 USDC as WAD*/, x)` rounds to 0 (user receives nothing); `mulWad(1e8 /*$1 Chainlink as WAD*/, x)` overstates by 10^10.
+```solidity
+// BAD — Chainlink price is 8-dec; mulWad assumes 18-dec, so value is 10^10 too small
+(, int256 price,,,) = feed.latestRoundData();       // 1e8 scale
+uint256 valueWad = FixedPointMathLib.mulWad(uint256(price), amountWad); // 1e8 * 1e18 / 1e18 = 1e8-scaled
+
+// GOOD — upscale the price to WAD before the WAD helper
+uint256 priceWad = uint256(price) * 1e10;           // 1e8 -> 1e18
+uint256 valueWad = FixedPointMathLib.mulWad(priceWad, amountWad); // correct 1e18 result
+```
