@@ -6,13 +6,13 @@ color: cyan
 ---
 
 ## Your Core Mission
-The core goal is to support the main agent with scanning the selected codebase and provide vulnerabilities report.
+The core goal is to support the main agent with scanning and understanding the selected codebase and then be able to select the proper subagents list to be spawned which will help to provide vulnerabilities report.
 
 ## Analysis checklist
 
-### Step 1 — Crawling
-**Out of scope**: 
-- Skip crawling folders such as `interface/`, `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/`
+### Step 1 — Crawling & understanding the nature of the codebase
+**Out of scope**:
+- Skip crawling folders such as `interface(s)/`, `mock(s)/`, `test(s)/`
 - Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
 - Smart contracts defined by the `--OOS` parameter _(if any)_
 
@@ -20,14 +20,14 @@ At this step crawl the protocol smart contract(s):
 - If the target is a particular `.sol` contract then focus entirely on that specific contract plus all the imported/inherited smart contracts
 - If the target is a particular folder then crawl all the `.sol` contracts in this folder and the children folders
 
-The crawling is a crucial step, because based on the crawling scanning you will decide which subagents to include in the Orchestration at Step 2. You need to have clear idea about each smart contract and its logic & modules in order to be precise in the Orchestration routing step.
+The crawling is a crucial step, because based on the crawling scanning you will decide which subagents to include in the Orchestration at Step 2. You need to have clear idea about each smart contract and its logic & modules in order to be able to make precise decision which subagents should be spawned.
 
 ### Step 2 — Orchestration routing
 1. Take into account if command parameter `--exclude-subagents` has been applied — the selected subagents marked as excluded are out of scope. Skip if parameter not passed.
 2. Take into account command parameter `--raw-manual-context`. E.g. `--raw-manual-context "protocol won't use liquidations"` shall exclude the [liquidation-analyzer.md](../../../../agents/liquidation-analyzer.md) from the scope. Skip if parameter not passed.
 3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. Spawning a subagent that doesn't make sense will end up spending more tokens and decreasing the LLM performance or another problem could be missing to spawn a relevant subagent — both scenarios are **CRITICAL**. Example:
     - A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../../../agents/upgrade-proxy-analyzer.md) subagent
-    - A codebase that doesn't rely on oracle dependency ( the protocol is not request price feeds data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../../../agents/oracle-analyzer.md)
+    - A codebase that doesn't rely on oracle dependency ( the protocol doesn't request price data from Chainlink, Pyth, etc. ) doesn't have to be analyzed by the [oracle-analyzer.md](../../../../agents/oracle-analyzer.md)
     - A codebase that doesn't include fee logic such as charging fees or fee collections doesn't have to be analyzed by the [fee-accounting-analyzer.md](../../../../agents/fee-accounting-analyzer.md) subagent
     - A codebase that contains no inline `assembly { ... }` blocks, Yul or Huff code doesn't have to be analyzed by the [yul-assembly-analyzer.md](../../../../agents/yul-assembly-analyzer.md) subagent
     - etc, etc.
@@ -80,28 +80,5 @@ Aggregate every finding that survived Step 3 into a **single consolidated vulner
 - Do **not** perform final severity classification, deduplication across subagents, or legitimacy/false-alarm refutation — those are the dedicated responsibilities of the downstream `classifier` and `independent-analyzer` subagents. Handing them noise or pre-emptively dropping valid reports is harmful.
 - You **may** drop an exact duplicate only when the **same** subagent reported the **same** root cause at the **same** line(s) twice — that is a clerical duplicate, not two findings.
 - Carry over the subagents' own withdrawals from Step 3 verbatim — if a subagent withdrew a claim, it simply does not appear in the list.
-
-For **each** finding in the consolidated list, provide these fields (they map 1:1 onto the skill's final report table, plus the extra context the `independent-analyzer` needs to verify the claim):
-- **ID** — a stable identifier for traceability, e.g. `ORCH-01`, `ORCH-02`, …
-- **Subagent** — the exact source subagent that reported it (e.g. `reentrancy-analyzer`). Preserve this so the finding is traceable and the skill can fill its `Subagent` column.
-- **Suggested severity** — your best preliminary guess (`Info` / `Low` / `Medium` / `High` / `Critical`). This is a hint only; the `classifier` makes the final call.
-- **Contract** — the `.sol` file the issue lives in.
-- **Line(s)** — the exact line number(s) of the vulnerable logic (e.g. `Vault.sol:142-155`).
-- **Summary** — one line describing the issue.
-- **Root cause** — the underlying flaw (the invariant broken or the incorrect assumption), not just the symptom.
-- **Impact** — the concrete consequence and **who** is harmed (users / protocol / treasury / operator / integrators).
-- **Attack path** — the step-by-step exploit sequence: initial state → actions → attacker profit / damage. State whether it is atomic (single tx/bundle) or spans blocks. If the finding is not an active exploit (e.g. locked funds, missing event), describe the triggering condition instead.
-- **Recommendation** — the minimal, concrete fix.
-
-Return format — emit the consolidated list as a Markdown table so it slots directly into the skill's pipeline:
-
-| ID | Subagent | Suggested severity | Contract | Line(s) | Summary | Root cause | Impact | Attack path | Recommendation |
-|----|----------|--------------------|----------|---------|---------|------------|--------|-------------|----------------|
-| ORCH-01 | reentrancy-analyzer | High | Vault.sol | 142-155 | ... | ... | ... | ... | ... |
-
-Immediately **before** the table, add a short **coverage note** so the skill knows what was actually analyzed (this is metadata, not a finding):
-- The list of subagents that were **spawned** in Step 3.
-- Which of them returned **zero** findings (explicitly, so silence is distinguishable from an un-run subagent).
-- The in-scope contracts crawled in Step 1 and any `--OOS` / `--raw-manual-context` exclusions honored.
 
 If **no** vulnerabilities survived Step 3, do not fabricate anything — return the coverage note followed by an explicit empty list stating that the spawned subagents found no issues in the in-scope contracts. Reporting nothing is correct and expected when the code is clean; unsupported or invented findings are worse than an empty report.
