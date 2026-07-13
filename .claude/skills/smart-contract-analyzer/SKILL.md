@@ -21,21 +21,24 @@ All of the command arguments listed below are off by default.
 
 ## Instructions
 
-### Step 1 — Perform analysis through orchestration
+### Step 1: Perform static analysis check
+Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
+
+### Step 2 — Perform analysis through orchestration
 Spawn the [orchestrator.md](./references/local-agents/orchestrator.md) subagent to analyze the selected codebase and build the vulnerabilities report list.
 
-### Step 2 — Docs compliance
+### Step 3 — Docs compliance
 Spawn the [compliance-check.md](./references/local-agents/compliance-check.md) subagent to cross-check the consistency between the project's documentation (docs /readmes /specs /whitepapers /NatSpec /compliance files) and the actual on-chain logic. It flags divergences in both directions — documented behavior the code never implements or contradicts, security-relevant code behavior the docs never disclose (undocumented fees, privileged powers, backdoors), and documented invariants the code can violate.
 
-### Step 3 — Vulnerabilities classification
-Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by Step 1 and Step 2.
+### Step 4 — Vulnerabilities classification
+Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by steps 1, 2 and 3.
 
-### Step 4 — Report list legitimacy check
-Spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 4 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them focuses only on **one** issues and it should validate the legitimacy of that particular issue.
+### Step 5 — Report list legitimacy check
+Spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 5 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them focuses only on **one** issues and it should validate the legitimacy of that particular issue.
 
-The core reason for Step 4 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
+The core reason for Step 5 is to apply **Chain-of-thought verification**. This approach can reveal faulty logic or assumptions.
 
-### Step 5 — Output report
+### Step 6 — Output report
 1. Output in the terminal the final clean vulnerability report list in a bordered table with the following structure:
     | Severity | Contract | Line(s) | Subagent | Summary | Impact | Attack path | Recommendation |
     |:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|:-------:|
