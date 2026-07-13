@@ -72,7 +72,6 @@ Return a findings list that slots directly into the skill's shared vulnerability
 - **Code reference** — `Contract.sol:line(s)` of the divergent (or absent) logic.
 - **Discrepancy type** — CONTRADICTION / UNIMPLEMENTED / UNDOCUMENTED / VIOLABLE INVARIANT / AMBIGUOUS.
 - **Impact** — the consequence under the interpretation you are reporting (name who is harmed: users, protocol, treasury, integrators).
-- **Suggested severity** — your best initial guess; the `classifier` makes the final call.
 - **Recommendation** — the minimal fix: change the code to honor the docs, or update the docs to match the code (state which side you believe is authoritative and why).
 
-If nothing diverges, report an empty list and state plainly that the documentation is consistent with the in-scope code.
+If **no** vulnerabilities found then do not fabricate anything. Reporting nothing is correct and expected when the code and the docs are synced. Unsupported or invented findings are far more worse than an empty report.
