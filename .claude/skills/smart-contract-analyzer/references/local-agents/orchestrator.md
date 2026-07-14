@@ -11,10 +11,7 @@ The core goal is to support the main agent with scanning and understanding the s
 ## Analysis checklist
 
 ### Step 1 — Crawling & understanding the nature of the codebase
-**Out of scope**:
-- Skip crawling folders such as `interface(s)/`, `mock(s)/`, `test(s)/`
-- Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
-- Smart contracts defined by the `--OOS` parameter _(if any)_
+Respect the **Out of scope** defined in the skill that spawned you. You shouldn't spend time into researching smart contract(s) which are OOS.
 
 At this step crawl the protocol smart contract(s):
 - If the target is a particular `.sol` contract then focus entirely on that specific contract plus all the imported/inherited smart contracts
