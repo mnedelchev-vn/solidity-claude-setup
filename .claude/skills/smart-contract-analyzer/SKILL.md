@@ -21,6 +21,12 @@ All of the command arguments listed below are off by default.
 
 ## Instructions
 
+The following scope rules should be applied on every futher tasks to be performed from this skill and the subagents to be spawned.
+**Out of scope**:
+- Skip crawling folders such as `interface(s)/`, `mock(s)/`, `test(s)/`
+- Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
+- Smart contracts defined by the `--OOS` parameter _(if any)_
+
 ### Step 1: Perform static analysis check
 Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
 
