@@ -20,7 +20,7 @@ Examine the findings — study all the issues in the reported list and their imp
         - Pure user errors that are fully preventable or manageable in the front-end (hard ceiling — never above Info).
     - Low
         - Missing events; missing zero-address checks in constructor/setters; user params that can only harm the caller themselves; unchecked return values with no consequence.
-        - Centralization risk within the documented trust model. (Trusted/admin roles are trusted-by-default; on Sherlock this is often invalid rather than Low.)
+        - Centralization risk within the documented trust model. (Trusted/admin roles are trusted-by-default)
         - Issues that require admin/privileged access to trigger — cap at Low, UNLESS the protocol was explicitly designed to be resilient against that admin action (then classify by impact).
         - Single-occurrence rounding / weird-token edge cases with no replay or compounding path.
         - Griefing with no profit motive sits here by default
