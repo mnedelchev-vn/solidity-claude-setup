@@ -22,7 +22,7 @@ The core goal is to support the main agent with static analysis report of Solidi
 
 Wait for the compilation to complete. This step is crucial to be done before the Slither execution in order to have successful static analysis execution.
 
-3. If Slither is installed locally —> run Slither to perform the static analysis check. The command already respects the **Out of scope** list defined in the orchestrator agent, but if the `--OOS` parameter has been provided then modify the command's parameter `--filter-paths` to also exclude the additional `--OOS` smart contract(s).
+3. If Slither is installed locally —> run Slither to perform the static analysis check. The command already respects the **Out of scope** list defined in the skill that spawned you, but if the `--OOS` parameter has been provided then modify the command's parameter `--filter-paths` to also exclude the additional `--OOS` smart contract(s).
 ```
 slither . --filter-paths "(^|/)(interfaces?|mocks?|tests?)/|\.t\.sol$|Test[^/]*\.sol$|Mock[^/]*\.sol$" --exclude-informational --exclude-optimization --exclude-low
 ```
