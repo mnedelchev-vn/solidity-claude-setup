@@ -22,10 +22,12 @@ The core goal is to support the main agent with static analysis report of Solidi
 
 Wait for the compilation to complete. This step is crucial to be done before the Slither execution in order to have successful static analysis execution.
 
-3. If Slither is installed locally —> run Slither to perform the static analysis check. The command already respects the **Out of scope** list defined in the skill that spawned you, but if the `--OOS` parameter has been provided then modify the command's parameter `--filter-paths` to also exclude the additional `--OOS` smart contract(s).
+3. If Slither is installed locally —> run Slither to perform the static analysis check. The command already respects the **Out of scope** list defined in the skill that spawned you, but if the `--OOS` parameter has been provided then modify the command's parameter `--filter-paths` to also exclude the additional `--OOS` smart contract(s). The command should be ran in the folder with the selected smart contract(s) ( very often called contracts/ or src/ ).
 ```
 slither . --filter-paths "(^|/)(interfaces?|mocks?|tests?)/|\.t\.sol$|Test[^/]*\.sol$|Mock[^/]*\.sol$" --exclude-informational --exclude-optimization --exclude-low
 ```
+
+Print out response if the Slither execution was successful or not with resume of the found issues.
 
 ### Step 2 — Report the findings
 Wait for the Slither to complete the execution. Report back to the `/smart-contract-analyzer` skill that spawned you only the issues and vulnerabilities found by Slither. By default Slither reports back huge amount of report data, but the focus is only the Medium and High issues found by the Slither detectors.
