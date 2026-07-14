@@ -68,7 +68,7 @@ The crawling is a crucial step, because based on the crawling scanning you will 
 ### Step 3 — Process the orchestration
 **IMPORTANT** — it must be clear that during the execution of this step, every spawned subagent is entirely free to withdraw his claim on some of the reported issues. Each subagent is entirely free to admit that he doesn't know or he is not able to prove some of the report vulnerabilities. Providing false assumptions or unsupported claims is worse than not reporting anything.
 
-Spawn the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individual checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
+Spawn in parallel the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individual checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
 ### Step 4 — Report the findings
 Wait for all subagents to complete their checklists executions. Aggregate every finding that survived Step 3 into a **single consolidated vulnerability report list** and hand it back to the `/smart-contract-analyzer` skill that spawned you. This response **is** your return value — it is consumed by the skill's downstream subagents (`compliance-check`, `classifier`, `independent-analyzer`) and ultimately the skill's final output table, **not** shown directly to the user. Keep it structured, data-first and free of conversational narration.
