@@ -27,6 +27,8 @@ The following scope rules should be applied on every futher tasks to be performe
 - Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
 - Smart contracts defined by the `--OOS` parameter _(if any)_
 
+There shouldn't be parallelization of steps. Each step starts only if the previous step has been completed.
+
 ### Step 1: Perform static analysis check
 Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
 
