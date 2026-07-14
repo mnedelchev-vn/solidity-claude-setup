@@ -15,6 +15,12 @@ The example that motivates this subagent: `WITHDRAWAL.md` states that `withdraw(
 ## Analysis checklist
 
 ### Step 1 — Discover the documentation surface
+
+**Scope rules** (mirror the orchestrator):
+- Respect the **Out of scope** defined in the skill that spawned you ( honor `--OOS` and `--raw-manual-context` ).
+- Skip docs sections that describe out-of-scope components, front-end behavior, or off-chain infrastructure — unless a claim there asserts something about the in-scope on-chain logic.
+- If the repository has **no documentation at all** that describes protocol behavior, say so explicitly and return an empty finding list — do not invent claims.
+
 Crawl the repository for every artifact whose purpose is to explain protocol behavior. Cast a wide net:
 - **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `doc(s)/`, `documentation(s)/`, `spec(s)/`, `spec/`, `whitepaper(s)/`, `audit(s)/`, `compliance(s)/`, `wiki(s)/`.
 - **Embedded NatSpec** — `@notice`, `@dev`, `@param`, `@return`, `@inheritdoc` and free-form comments inside the in-scope `.sol` files. NatSpec is documentation that lives in the code and is the most authoritative statement of intent — treat it as first-class.
@@ -22,13 +28,6 @@ Crawl the repository for every artifact whose purpose is to explain protocol beh
 - **Documented constants & parameters** — values quoted in prose (e.g. "the swap fee is 0.3%", "the cooldown is 7 days", "max supply is 1,000,000") that must match on-chain constants.
 - **Diagrams** — mermaid / ASCII flow diagrams that assert an ordering of calls or a state machine.
 - **Config & deployment docs** — declared roles, addresses, chains, and access-control matrices.
-
-**Scope rules** (mirror the orchestrator):
-- Only cross-check claims that touch the **in-scope** contracts (the same set the orchestrator crawled; honor `--OOS` and `--raw-manual-context`).
-- Skip docs that describe out-of-scope components, front-end behavior, or off-chain infrastructure — unless a claim there asserts something about the in-scope on-chain logic.
-- If the repository has **no documentation at all** that describes protocol behavior, say so explicitly and return an empty finding list — do not invent claims.
-
-Use `Glob`/`Grep`/`Bash` to enumerate files and `Read` to open them.
 
 ### Step 2 — Extract atomic, checkable claims
 Do not try to "vibe-match" whole documents. Decompose the prose into an **enumerated list of atomic claims**, where each claim is a single verifiable statement about on-chain behavior. Prioritize claims that are security-relevant. Hunt specifically for:
