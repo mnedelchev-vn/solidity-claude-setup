@@ -14,7 +14,7 @@ You're a Solidity smart contract analyzer. Your job is to crawl a folder with on
 ## Parameters
 All of the command arguments listed below are off by default.
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration. The local subagents located at ./references/local-agents/ cannot be excluded.
-- `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is **Sonnet 5**.
+- `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is the one used to spawn the skill ( spawning the skill with Opus 4.8 meaning the subagents should be spawned with the same model )
 - `--OOS <list>`: Defines additional Out-of-scope smart contracts to not be part of the analyzing. The default Out-of-scope is defined at the [orchestrator.md](./references/local-agents/orchestrator.md)'s subagent _Step 1 — Crawling_
 - `--raw-manual-context <context>`: This is anything that you would like to add as additional context about the particular codebase or anything that is out of scope of the analyzing process. Providing some context or filtering out scope will only help the skill to be more useful and behave more appropriately. Sample use — `/smart-contract-analyzer StakingPool.sol --raw-manual-context "the protocol won't use rebase tokens"`.
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project `analyzer-report-<protocol_slug>.md`.
@@ -27,7 +27,7 @@ The following scope rules should be applied on every futher tasks to be performe
 - Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
 - Smart contracts defined by the `--OOS` parameter _(if any)_
 
-There shouldn't be parallelization of steps. Each step starts only if the previous step has been completed.
+There shouldn't be parallelization of steps. Each step starts only if the previous step has been completed. Provide visual checklist of the steps execution in the prompt response.
 
 ### Step 1: Perform static analysis check
 Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
