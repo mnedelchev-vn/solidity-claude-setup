@@ -1,7 +1,6 @@
 ---
 name: smart-contract-analyzer
 description: This skill helps Solidity developers, auditors or security researchers to find vulnerabilities inside a Solidity smart contract(s). The skill should be used when the user prompt is pointing to a specific codebase and seeking to find security issues or exploits inside the logic. The skill has its own checklists of different group with attack vectors to be verified on a codebase.
-disable-model-invocation: true
 license: MIT License
 metadata:
     author: https://x.com/mnedelchev_
