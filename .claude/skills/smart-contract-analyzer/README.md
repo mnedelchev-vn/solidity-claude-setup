@@ -38,7 +38,6 @@ flowchart TD
 
     classDef skill fill:#1f6feb,stroke:#0d419d,color:#fff;
     classDef local fill:#1a7f37,stroke:#116329,color:#fff;
-    classDef static fill:#0f7c74,stroke:#0a5952,color:#fff;
     classDef out fill:#8250df,stroke:#6639ba,color:#fff;
     classDef g1 fill:#eef1f4,stroke:#57606a,color:#24292f;
     classDef g2 fill:#ffebe9,stroke:#cf222e,color:#24292f;
@@ -47,8 +46,7 @@ flowchart TD
     classDef g5 fill:#eeeefc,stroke:#4646c9,color:#24292f;
     classDef g6 fill:#e6f4ea,stroke:#1a7f37,color:#24292f;
     class SKILL skill;
-    class STATIC static;
-    class ORCH,COMPL,CLASS,INDEP local;
+    class STATIC,ORCH,COMPL,CLASS,INDEP local;
     class OUT out;
     class G1 g1; class G2 g2; class G3 g3; class G4 g4; class G5 g5; class G6 g6;
 ```
