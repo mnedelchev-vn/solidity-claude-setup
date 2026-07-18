@@ -27,7 +27,7 @@ Wait for the compilation to complete. This step is crucial to be done before the
 slither . --filter-paths "(^|/)(interfaces?|mocks?|tests?)/|\.t\.sol$|Test[^/]*\.sol$|Mock[^/]*\.sol$" --exclude-informational --exclude-optimization --exclude-low
 ```
 
-Print out response if the Slither execution was successful or not with resume of the found issues.
+Print out response if the Slither execution was successful ( with resume of the found issues ). If execution not successfull print out the reason or the error.
 
 ### Step 2 — Report the findings
 Wait for the Slither to complete the execution. Report back to the `/smart-contract-analyzer` skill that spawned you only the issues and vulnerabilities found by Slither. By default Slither reports back huge amount of report data, but the focus is only the Medium and High issues found by the Slither detectors.
