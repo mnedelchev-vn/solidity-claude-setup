@@ -4,11 +4,12 @@ The main purpose of this skill is to crawl a codebase with smart contract(s) and
 
 ## Architecture
 
-The whole orchestration at a glance — the skill _(Level 0)_ drives three non-excludable local agents _(Level 1)_; only the `orchestrator` fans out, routing to a **selected subset** of the 33 vulnerability subagents _(Level 2)_ before the report is classified and independently verified:
+The whole orchestration at a glance — the skill _(Level 0)_ drives five non-excludable local agents _(Level 1)_ — a Slither `static-analyzer` pass plus routing, compliance, classification and independent verification; only the `orchestrator` fans out, routing to a **selected subset** of the 33 vulnerability subagents _(Level 2)_ before the merged report is classified and independently verified:
 
 ```mermaid
 flowchart TD
     SKILL(["🛡️ /smart-contract-analyzer<br/><b>Level 0 · Skill (entry point)</b>"])
+    STATIC["🔬 static-analyzer<br/><i>Level 1 · local agent — Slither static-analysis pass</i>"]
     ORCH["🧭 orchestrator<br/><i>Level 1 · local agent — crawls & routes</i>"]
     COMPL["📑 compliance-check<br/><i>Level 1 · local agent — docs ↔ code consistency</i>"]
     CLASS["⚖️ classifier<br/><i>Level 1 · local agent — severity · dedupe · false-alarm</i>"]
@@ -25,16 +26,19 @@ flowchart TD
       G6["<b>Protocol-specific modules · 8</b><br/>lending-protocol-analyzer<br/>liquidation-analyzer<br/>amm-dex-analyzer<br/>perpetual-derivatives-analyzer<br/>liquid-staking-restaking-analyzer<br/>withdrawal-queue-redemption-analyzer<br/>vesting-streaming-analyzer<br/>auction-mechanism-analyzer"]
     end
 
-    SKILL -- "Step 1 · spawn" --> ORCH
-    SKILL -- "Step 2 · spawn" --> COMPL
+    SKILL -- "Step 1 · spawn" --> STATIC
+    SKILL -- "Step 2 · spawn" --> ORCH
+    SKILL -- "Step 3 · spawn" --> COMPL
     ORCH -- "routes to a selected subset (not all 33)" --> POOL
+    STATIC -- "Slither findings" --> CLASS
     POOL -- "raw findings" --> CLASS
     COMPL -- "doc ↔ code findings" --> CLASS
-    CLASS -- "Step 3 · deduped + ranked" --> INDEP
-    INDEP -- "Step 4 · false positives removed" --> OUT
+    CLASS -- "Step 4 · deduped + ranked" --> INDEP
+    INDEP -- "Step 5 · false positives removed" --> OUT
 
     classDef skill fill:#1f6feb,stroke:#0d419d,color:#fff;
     classDef local fill:#1a7f37,stroke:#116329,color:#fff;
+    classDef static fill:#0f7c74,stroke:#0a5952,color:#fff;
     classDef out fill:#8250df,stroke:#6639ba,color:#fff;
     classDef g1 fill:#eef1f4,stroke:#57606a,color:#24292f;
     classDef g2 fill:#ffebe9,stroke:#cf222e,color:#24292f;
@@ -43,6 +47,7 @@ flowchart TD
     classDef g5 fill:#eeeefc,stroke:#4646c9,color:#24292f;
     classDef g6 fill:#e6f4ea,stroke:#1a7f37,color:#24292f;
     class SKILL skill;
+    class STATIC static;
     class ORCH,COMPL,CLASS,INDEP local;
     class OUT out;
     class G1 g1; class G2 g2; class G3 g3; class G4 g4; class G5 g5; class G6 g6;
