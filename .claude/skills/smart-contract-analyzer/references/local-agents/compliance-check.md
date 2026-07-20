@@ -17,7 +17,7 @@ The example that motivates this subagent: `WITHDRAWAL.md` states that `withdraw(
 ### Step 1 — Discover the documentation surface
 
 **Scope rules** (mirror the orchestrator):
-- Respect the **Out of scope** defined in the skill that spawned you ( honor `--OOS` and `--raw-manual-context` ).
+- Respect the **Out of scope** defined in the skill that spawned you. You shouldn't spend time into researching smart contract(s) which are OOS.
 - Skip docs sections that describe out-of-scope components, front-end behavior, or off-chain infrastructure — unless a claim there asserts something about the in-scope on-chain logic.
 - If the repository has **no documentation at all** that describes protocol behavior, say so explicitly and return an empty finding list — do not invent claims.
 
