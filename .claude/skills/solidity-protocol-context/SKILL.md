@@ -11,7 +11,7 @@ metadata:
 You're a Solidity protocol analyzer. Your job is to crawl a folder with one or multiple Solidity smart contracts, analyze and understand the flows and relations in the project and print out a context report based on the instructions below.
 
 ## Goal
-Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that after using the skill the builder or the auditor has a clear picture of the particular protocol.
+Everything works better by following a predefined pattern and rules. Being a web3 Solidity builder or an auditor involves studying of new protocols on a weekly basis and in the constant studying it's very likely that we miss to understand something from the beginning. Some codebases are written clear with proper comments, but some of them are confusing and hard to understand from the first touch. This skill defines a set of customized rules to be followed when the research of a protocol is being performed. The end goal is that through using this skill the builder or the auditor to have a clear picture of the particular protocol.
 
 ## Modes
 All of the terminal arguments listed below are off by default.
@@ -21,11 +21,28 @@ All of the terminal arguments listed below are off by default.
 - `--docs-url <url>`: When provided, fetch the content at `<url>` using the WebFetch tool before analyzing any contracts. Could be a documentation url or just a github repo url with proper readmes providing information about the protocol. Enumerate the sitemap, discover subpages and crawl the rest of the documentation tree. Use the fetched documentation as additional context throughout the analysis — reference it when explaining protocol-specific concepts, naming conventions, or architectural decisions found in the code. The scope is the entire url page and all of its subpages.
 
 ## Instructions
-### Step 1 — Crawling
-At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file.
+
+### Step 1 — Studying the code
 **Out of scope**: skip crawling folders such as `interfaces/`, `mock/`, `mocks/`, `test/`, `tests/` and files with following pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`.
 
-### Step 2 — High level report
+At this step crawl the protocol smart contract(s). If the skill has been triggered on a specific project folder then the search pattern for the smart contract(s) is `./contracts/**/*.sol` or `./src/**/*.sol`. Ignore if skill is triggered on particular `.sol` file. 
+
+Take your time to study the code, you need to have clear idea of the entire logic in order to be able to export proper context reports.
+
+### Step 2 — Studying the specs
+**Scope rules**:
+- Respect the **Out of scope** defined in the skill that spawned you. You shouldn't spend time into researching smart contract(s) which are OOS.
+- Skip docs sections that describe out-of-scope components, front-end behavior, or off-chain infrastructure — unless a claim there asserts something about the in-scope on-chain logic.
+- If the repository has **no documentation at all** that describes protocol behavior, say so explicitly and return an empty finding list — do not invent claims.
+
+Crawl the repository for every artifact whose purpose is to explain protocol behavior. Cast a wide net:
+- **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `doc(s)/`, `documentation(s)/`, `spec(s)/`, `whitepaper(s)/`, `audit(s)/`, `compliance(s)/`, `wiki(s)/`.
+- **Embedded NatSpec** — `@notice`, `@dev`, `@param`, `@return`, `@inheritdoc` and free-form comments inside the in-scope `.sol` files. NatSpec is documentation that lives in the code and is the most authoritative statement of intent — treat it as first-class.
+- **Diagrams** — mermaid / ASCII flow diagrams that assert an ordering of calls or a state machine.
+
+Studying the specs will complete the entire picture and fill the gap of what could not be understood just by crawling the code.
+
+### Step 3 — High level report
 As the title of this step says — this is a very high level exploring of the protocol. Ignore any internal methods and logic, dependencies should be ignored as well. The key of the High level report is not to get lost in complexity.
 
 1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic English what is the project about.
@@ -38,7 +55,7 @@ As the title of this step says — this is a very high level exploring of the pr
         - `withdraw(uint256 amount, Permit calldata _signature)`
     - etc.
 
-### Step 3 — In-depth level report
+### Step 4 — In-depth level report
 1. Diagrams of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role:
     - Provide separate list if there is a superior protocol role that manages other roles e.g. admin being able to add or remove operators
 2. Diagrams of all the funds flows in each contract. A contract having `payable` fallback is also considered as potential funds flow.
