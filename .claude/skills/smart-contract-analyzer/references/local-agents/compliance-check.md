@@ -22,7 +22,7 @@ The example that motivates this subagent: `WITHDRAWAL.md` states that `withdraw(
 - If the repository has **no documentation at all** that describes protocol behavior, say so explicitly and return an empty finding list — do not invent claims.
 
 Crawl the repository for every artifact whose purpose is to explain protocol behavior. Cast a wide net:
-- **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `doc(s)/`, `documentation(s)/`, `spec(s)/`, `spec/`, `whitepaper(s)/`, `audit(s)/`, `compliance(s)/`, `wiki(s)/`.
+- **Markdown & text docs** — `README*`, `*.md`, `*.txt`, `*.rst`, and anything under `doc(s)/`, `documentation(s)/`, `spec(s)/`, `whitepaper(s)/`, `audit(s)/`, `compliance(s)/`, `wiki(s)/`.
 - **Embedded NatSpec** — `@notice`, `@dev`, `@param`, `@return`, `@inheritdoc` and free-form comments inside the in-scope `.sol` files. NatSpec is documentation that lives in the code and is the most authoritative statement of intent — treat it as first-class.
 - **Invariant / property specs** — Certora `.spec`, Echidna/Foundry invariant tests, formal-verification READMEs, and any file that literally lists protocol invariants ("totalShares always equals ...", "fee never exceeds ...").
 - **Documented constants & parameters** — values quoted in prose (e.g. "the swap fee is 0.3%", "the cooldown is 7 days", "max supply is 1,000,000") that must match on-chain constants.
@@ -53,24 +53,7 @@ For every extracted claim, locate the corresponding code path, read it end-to-en
 
 Be concrete: cite the exact doc location (`FILE.md:line` or section heading) **and** the exact code location (`Contract.sol:line`). A finding must always point at both sides of the divergence.
 
-### Step 4 — Judge direction and security impact
-A doc/code mismatch is not automatically a high-severity bug. For each surviving discrepancy, reason through **both hypotheses** and report the interpretation that carries real impact:
-- **Hypothesis A — the docs are the intended spec, so the code is buggy.** What breaks? Lost fees/revenue, missing access control, a violated invariant, funds routed to the wrong place? This is usually the severe reading.
-- **Hypothesis B — the code is correct, so the docs are stale.** What is the impact of the wrong documentation? Integrators/users acting on a false promise, an auditor's incorrect trust assumption, over/understated guarantees? Often Info/Low — but not always (a false "we don't support fee-on-transfer tokens" that the code *does* let in can be High).
-
-Apply these guardrails so the report stays signal-rich (the downstream `classifier` and `independent-analyzer` will still re-judge everything, but do not hand them noise):
-- Pure wording, typos, outdated version numbers, stale example addresses, and prose that merely *simplifies* the code (without contradicting it) → at most **Info**, or drop.
-- If the mismatch has no reachable on-chain consequence under either hypothesis, keep it Info-level and label it "documentation drift".
-- Do not report a "missing" behavior if it is actually implemented in an inherited contract, a library, a modifier, or a different function you have not read — trace it fully first.
-- You are entirely free to **withdraw** any claim. If you cannot point at both the doc statement and the concrete code path that disagree with it, do not report it. An honest "the code matches the docs here" or "I could not verify this claim" is worth more than a fabricated discrepancy — providing false or unsupported claims is worse than reporting nothing.
-
-### Step 5 — Report the findings
-Return a findings list that slots directly into the skill's shared vulnerability report so the `classifier` and `independent-analyzer` can process it. For each finding provide:
-- **Summary** — one line: *"Docs claim X, code does Y."*
-- **Doc reference** — file + line/section and a short quote of the exact claim.
-- **Code reference** — `Contract.sol:line(s)` of the divergent (or absent) logic.
-- **Discrepancy type** — CONTRADICTION / UNIMPLEMENTED / UNDOCUMENTED / VIOLABLE INVARIANT / AMBIGUOUS.
-- **Impact** — the consequence under the interpretation you are reporting (name who is harmed: users, protocol, treasury, integrators).
-- **Recommendation** — the minimal fix: change the code to honor the docs, or update the docs to match the code (state which side you believe is authoritative and why).
+### Step 4 — Report the findings
+Return a findings list that slots directly into the skill's shared vulnerability report so the `classifier` and `independent-analyzer` can process it.
 
 If **no** vulnerabilities found then do not fabricate anything. Reporting nothing is correct and expected when the code and the docs are synced. Unsupported or invented findings are far more worse than an empty report.
