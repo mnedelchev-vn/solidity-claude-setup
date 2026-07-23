@@ -43,7 +43,7 @@ Crawl the repository for every artifact whose purpose is to explain protocol beh
 Studying the specs will complete the entire picture and fill the gap of what could not be understood just by studying the code.
 
 ### Step 3 — High level report
-This is a very high level exploring of the protocol. Ignore any internal methods requests and internal logic, requests to dependencies should be ignored as well. The key of the High level report is not to get lost in complexity.
+This is a very high level exploring of the protocol. Ignore any internal methods requests and internal logic, requests to dependencies should be ignored as well. The key of the High level report is not to get lost in complexity. Respect parameter `--skip-high-level`.
 
 1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have basic understanding what is the type of the protocol — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic English what is the project about.
 2. Provide a high level diagram including only the top-level interactions in the protocol. Internal calls between and dependencies to not be included in the diagram.
@@ -57,10 +57,19 @@ This is a very high level exploring of the protocol. Ignore any internal methods
     - etc.
 
 ### Step 4 — In-depth level report
-1. Diagrams of all the access control per methods for the roles. Please clarify all the responsibilities flow for each role:
-    - Provide separate list if there is a superior protocol role that manages other roles e.g. admin being able to add or remove operators
-2. Diagrams of all the funds flows in each contract. A contract having `payable` fallback is also considered as potential funds flow. NFT transfers should also be treated as a funds flow.
-    - Add information about what type of currency each of the contracts will hold in the different stages or cases of the lifecycle
-    - Separated diagrams about the fee collection logic
-3. A diagram of all the modules and internal requests between the protocol's contracts. If the protocol is separated into periphery and core keep the same categorization in the report. If the protocol includes upgradeable contract list them in separate table.
-4. Dependencies table — if the protocol relies on 3rd party contract e.g. swap action to Uniswap, include every individual dependency channel. This step should also include any oracles used.
+This report is supposed to complete the entire picture compared to the high level report. Every tiny detail matters here. Respect parameter `--skip-in-depth-level`.
+
+1. Diagrams:
+    1.1. One main diagram including the entire mind map of all actors, contracts, modules, dependencies, external and internal requests. If the protocol is separated into periphery and core keep the same categorization in the report. You can use as benchmark the diagram [tare-onchain-architecture.jpg](./references/tare-onchain-architecture.jpg).
+    1.2. Diagrams of all the access control per methods for the roles. Separate them into two different categories — trusted & untrusted. Please clarify all the responsibilities flow for each role:
+        - Provide separate list if there is a superior protocol role that manages other roles e.g. admin being able to add or remove operators
+        - Specific role that manages contract upgradability, timelocks, etc.
+        - Trove manager being able to operate with pool's funds
+        - etc, etc.
+    1.3. Separate diagrams of all the funds flows in each contract:
+        - Add information about what type of tokens each of the contracts will hold in the different stages or cases of the lifecycle
+        - Separated diagrams about the fee generation & collection logic
+        - NFT transfers should also be treated as a funds flow
+        - A contract having `payable` fallback is also considered as potential funds flow
+    1.4. Zoomed-in diagram of all the internal/external modules and internal/external requests between the protocol's contracts or any other contracts. If the protocol includes upgradeable contract list them in separate table.
+2. Dependencies table — if the protocol relies on 3rd party contract e.g. swap action to Uniswap or fetching prices from Chainlink — include every individual dependency channel.
