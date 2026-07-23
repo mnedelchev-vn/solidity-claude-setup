@@ -45,7 +45,7 @@ Studying the specs will complete the entire picture and fill the gap of what cou
 ### Step 3 — High level report
 This is a very high-level exploration of the protocol. Ignore any internal methods requests and internal logic, requests to dependencies should be ignored as well. The key of the High level report is not to get lost in complexity. Respect parameter `--skip-high-level`.
 
-1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have a basic understanding of what the type of the protocol is — DEX, Lending, LST, etc. After this step I should have a clear idea of the protocol so I can easily explain with basic English what is the project about.
+1. Provide a high level understanding of the protocol within 5 to 15 sentences. From this step I need to have a basic understanding of what the type of the protocol is — DEX, Lending, LST, etc. Which are the target chains of deployment if known. After this step I should have a clear idea of the protocol so I can easily explain with basic English what is the project about.
 2. Provide a high level diagram including only the top-level interactions in the protocol. Internal calls and dependencies should not be included in the diagram.
 3. List all the actors — e.g. users, governance, operators, signers, admins, depositors, borrowers, liquidators, treasury managers, fee collectors, etc., all of them! If for some of the roles it's sure that it's supposed to be a smart contract then mark it as "Contract", if not then "EOA or smart contract".
 4. Table list of all the entry points per smart contract ( public or external methods without access control ). `fallback` or `receive` are also treated as an entry point to a particular contract. Ignore getter methods and "helper/utils" methods that are built to serve other methods internally, example — `_computeFee`, `_calculateInterest`, etc. ( most of the times these methods are `internal` ). Add a table column with a short plain text description of each method's purpose. Add a table column with the method's keywords & modifiers — visibility ( `public`, `external`, `internal`, `private` ), Mutability ( `view`, `pure`, `payable` ), `virtual` & `override` and all the custom defined modifiers. Include symmetry checks of opposing methods, example:
@@ -74,3 +74,6 @@ This report is supposed to complete the entire picture compared to the high leve
         - A contract having `payable` fallback is also considered as potential funds flow
     1.4. Zoomed-in diagram of all the internal/external modules and internal/external requests between the protocol's contracts or any other contracts. If the protocol includes upgradeable contracts, list them in a separate table.
 2. Dependencies table — if the protocol relies on a 3rd party contract e.g. swap action to Uniswap or fetching prices from Chainlink — include every individual dependency channel.
+
+### Step 5 — Fix diagrams
+Very often the mermaid diagrams have parsing errors. Double check every diagram for such issues and apply fixes if needed. Check the diagrams in "Open preview" mode as well.
