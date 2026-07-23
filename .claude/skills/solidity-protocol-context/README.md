@@ -28,5 +28,5 @@ Trigger the skill directly with the following terminal command:
 ## Installation
 
 ```
-mkdir -p ~/.claude/skills/solidity-protocol-context && cp -R .claude/skills/solidity-protocol-context/SKILL.md ~/.claude/skills/solidity-protocol-context
+mkdir -p ~/.claude/skills/solidity-protocol-context && cp -R .claude/skills/solidity-protocol-context/SKILL.md ~/.claude/skills/solidity-protocol-context && cp -R .claude/skills/solidity-protocol-context/references ~/.claude/skills/solidity-protocol-context
 ```
