@@ -13,20 +13,31 @@ You're a Solidity smart contract analyzer. Your job is to crawl a folder with on
 ## Parameters
 All of the command arguments listed below are off by default.
 - `--exclude-subagents <list>`: Skip one or many security subagents from the Orchestration. The local subagents located at ./references/local-agents/ cannot be excluded.
-- `--subagents-model <model>`: Spawn the subagents with predefined model. Default agent is the one used to spawn the skill ( spawning the skill with Opus 4.8 meaning the subagents should be spawned with the same model )
+- `--subagents-model <model>`: Spawn the subagents with predefined model. The default model is the one used to spawn the skill ( spawning the skill with Opus 4.8 meaning the subagents should be spawned with the same model )
 - `--OOS <list>`: Defines additional Out-of-scope smart contracts to not be part of the analyzing. The default Out-of-scope is defined at the [orchestrator.md](./references/local-agents/orchestrator.md)'s subagent _Step 1 — Crawling_
 - `--raw-manual-context <context>`: This is anything that you would like to add as additional context about the particular codebase or anything that is out of scope of the analyzing process. Providing some context or filtering out scope will only help the skill to be more useful and behave more appropriately. Sample use — `/smart-contract-analyzer StakingPool.sol --raw-manual-context "the protocol won't use rebase tokens"`.
 - `--report-output`: Saves the output into clean and polished report file at the root of the particular project `analyzer-report-<protocol_slug>.md`.
 
 ## Instructions
 
+There shouldn't be parallelization of steps. Each step starts only if the previous step has been completed. Provide visual checklist info of the steps execution in the prompt response on each step. The checklist should be updated after each step is completed. The checklist should be in the following format:
+```
+[ ] Step 1 — Perform static analysis check
+[ ] Step 2 — Perform analysis through orchestration
+[ ] Step 3 — Docs compliance
+[ ] Step 4 — Vulnerabilities classification
+[ ] Step 5 — Report list legitimacy check
+[ ] Step 6 — Output report
+```
+
+### Scope rules
 The following scope rules should be applied on every futher tasks to be performed from this skill and the subagents to be spawned.
 **Out of scope**:
-- Skip crawling folders such as `interface(s)/`, `mock(s)/`, `test(s)/`
-- Smart contracts with following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
-- Smart contracts defined by the `--OOS` parameter _(if any)_
+- Ignore folders such as `interface(s)/`, `mock(s)/`, `test(s)/` ( and any file/folder that is inside them )
+- Ignore smart contracts with the following name pattern `*.t.sol`, `*Test*.sol` or `*Mock*.sol`
+- Ignore smart contracts defined by the `--OOS` parameter _(if any)_
 
-There shouldn't be parallelization of steps. Each step starts only if the previous step has been completed. Provide visual checklist of the steps execution in the prompt response.
+Scope rules are very strict and should be applied on every subagent spawned by this skill. The subagents should not analyze any smart contract that is out of scope even if they targeted codebase is a directory with out-of-scope smart contracts. The skill and the subagents should only analyze the in-scope smart contracts.
 
 ### Step 1: Perform static analysis check
 Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
