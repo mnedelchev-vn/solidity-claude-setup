@@ -40,16 +40,18 @@ The following scope rules should be applied on every futher tasks to be performe
 Scope rules are very strict and should be applied on every subagent spawned by this skill. The subagents should not analyze any smart contract that is out of scope even if they targeted codebase is a directory with out-of-scope smart contracts. The skill and the subagents should only analyze the in-scope smart contracts.
 
 ### Step 1: Perform static analysis check
-Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase.
+Spawn the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent to perform a static analysis check of the provided Solidity codebase. The subagent runs Slither first and then Solhint, both with the same Out-of-scope rules.
+
+**Everything reported by Slither and Solhint is only a LEAD — never a proven vulnerability.** The static analysis report is used for two purposes only: (1) visibility and context for the orchestrator on which subagents to spawn and (2) unverified leads that the spawned subagents must validate on their own. Do not add static analysis leads to the vulnerabilities report list and do not present them as findings — only issues validated by a subagent can become part of the report.
 
 ### Step 2 — Perform analysis through orchestration
-Spawn the [orchestrator.md](./references/local-agents/orchestrator.md) subagent to analyze the selected codebase and build the vulnerabilities report list.
+Spawn the [orchestrator.md](./references/local-agents/orchestrator.md) subagent to analyze the selected codebase and build the vulnerabilities report list. Pass to it the full leads report from Step 1 and state clearly that those are leads, not proven vulnerabilities.
 
 ### Step 3 — Docs compliance
 Spawn the [compliance-check.md](./references/local-agents/compliance-check.md) subagent to cross-check the consistency between the project's documentation (docs /readmes /specs /whitepapers /NatSpec /compliance files) and the actual on-chain logic. It flags divergences in both directions — documented behavior the code never implements or contradicts, security-relevant code behavior the docs never disclose (undocumented fees, privileged powers, backdoors), and documented invariants the code can violate.
 
 ### Step 4 — Vulnerabilities classification
-Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by steps 1, 2 and 3.
+Spawn the [classifier.md](./references/local-agents/classifier.md) subagent to perform the classification evaluation of the found issues by steps 2 and 3. The Step 1 static analysis leads are not issues and are not part of the list — only the ones that were validated by a subagent in Step 2 are there.
 
 ### Step 5 — Report list legitimacy check
 Spawn dedicated [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents per issue in the report list. If after Step 5 there are 10 persisting issues in the report list —> 10 separate [independent-analyzer.md](./references/local-agents/independent-analyzer.md) subagents should be spawned. Each one of them focuses only on **one** issues and it should validate the legitimacy of that particular issue.
