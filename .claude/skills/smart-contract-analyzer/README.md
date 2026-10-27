@@ -4,12 +4,12 @@ The main purpose of this skill is to crawl a codebase with smart contract(s) and
 
 ## Architecture
 
-The whole orchestration at a glance — the skill _(Level 0)_ drives five non-excludable local agents _(Level 1)_ — a Slither `static-analyzer` pass plus routing, compliance, classification and independent verification; only the `orchestrator` fans out, routing to a **selected subset** of the 33 vulnerability subagents _(Level 2)_ before the merged report is classified and independently verified:
+The whole orchestration at a glance — the skill _(Level 0)_ drives five non-excludable local agents _(Level 1)_ — a `static-analyzer` pass ( Slither, then Solhint ) that produces **leads** plus routing, compliance, classification and independent verification; only the `orchestrator` fans out, routing to a **selected subset** of the 33 vulnerability subagents _(Level 2)_ before the merged report is classified and independently verified:
 
 ```mermaid
 flowchart TD
     SKILL(["🛡️ /smart-contract-analyzer<br/><b>Level 0 · Skill (entry point)</b>"])
-    STATIC["🔬 static-analyzer<br/><i>Level 1 · local agent — Slither static-analysis pass</i>"]
+    STATIC["🔬 static-analyzer<br/><i>Level 1 · local agent — Slither + Solhint pass, produces leads</i>"]
     ORCH["🧭 orchestrator<br/><i>Level 1 · local agent — crawls & routes</i>"]
     COMPL["📑 compliance-check<br/><i>Level 1 · local agent — docs ↔ code consistency</i>"]
     CLASS["⚖️ classifier<br/><i>Level 1 · local agent — severity · dedupe · false-alarm</i>"]
@@ -29,8 +29,8 @@ flowchart TD
     SKILL -- "Step 1 · spawn" --> STATIC
     SKILL -- "Step 2 · spawn" --> ORCH
     SKILL -- "Step 3 · spawn" --> COMPL
-    ORCH -- "routes to a selected subset (not all 33)" --> POOL
-    STATIC -- "Slither findings" --> CLASS
+    STATIC -- "leads (unverified): routing visibility" --> ORCH
+    ORCH -- "routes to a selected subset (not all 33) + relevant leads to validate" --> POOL
     POOL -- "raw findings" --> CLASS
     COMPL -- "doc ↔ code findings" --> CLASS
     CLASS -- "Step 4 · deduped + ranked" --> INDEP
@@ -87,6 +87,8 @@ The skill is currently spawning 33 unique subagents _( Orchestration )_ covering
 | [withdrawal-queue-redemption-analyzer.md](../../agents/withdrawal-queue-redemption-analyzer.md) | 22 | Withdrawal queues and redemptions: queue/epoch accounting, request ordering, claim-at-wrong-price, partial fulfillment, queue griefing/DoS, and stuck redemption requests. |
 | [vesting-streaming-analyzer.md](../../agents/vesting-streaming-analyzer.md) | 23 | Vesting and streaming security: release rate math, claim drainage, vesting transfers, cliff bypass, revocation accounting, stream cancellation, rebasing token vesting, and migration formula errors. |
 | [auction-mechanism-analyzer.md](../../agents/auction-mechanism-analyzer.md) | 23 | Auction mechanism security: Dutch auction price decay, zero-amount purchases, bid cancellation/sniping, settlement errors, bidder griefing, escrow management, collateral auctions, and reserve price enforcement. |
+
+Before the orchestration, the [static-analyzer.md](./references/local-agents/static-analyzer.md) subagent runs Slither and then Solhint ( both skip interfaces, mocks and tests; Solhint uses the ruleset at [.solhint.json](./references/solhint/.solhint.json) ). Their output is treated only as **leads**, never as proven vulnerabilities — it gives the orchestrator visibility on which subagents to spawn and hands the spawned subagents unverified pointers that they must validate independently. A lead becomes a finding only if a subagent proves it.
 
 The skill decides which subagent is to be called per codebase:
 - A codebase that doesn't include upgradeable smart contracts pattern doesn't have to be analyzed by the [upgrade-proxy-analyzer.md](../../agents/upgrade-proxy-analyzer.md) subagent
