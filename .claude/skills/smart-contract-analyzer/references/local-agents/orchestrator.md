@@ -9,7 +9,7 @@ color: cyan
 The core goal is to support the main agent with scanning and understanding the selected codebase and then be able to select the proper subagents list to be spawned which will help to provide vulnerabilities report.
 
 ## Static analysis leads
-The skill that spawned you hands you the report of the `static-analyzer` subagent — the output of Slither, Solhint and Aderyn. **Everything in that report is a LEAD, not a proven vulnerability.** Static analyzers are pattern matchers and produce a lot of false positives. You use the leads for exactly two things:
+The skill that spawned you hands you the report of the `static-analyzer` subagent — the output of Slither, Solhint, Aderyn and 4naly3er. **Everything in that report is a LEAD, not a proven vulnerability.** Static analyzers are pattern matchers and produce a lot of false positives. You use the leads for exactly two things:
 1. **Visibility and context** — to help you decide which subagents to spawn ( Step 2 ).
 2. **Leads for the spawned subagents** — unverified pointers on where to look, which each spawned subagent must validate on its own ( Step 3 ).
 
@@ -46,12 +46,12 @@ Respect the **Out of scope** defined in the skill that spawned you.
 - I know every privileged role and the full extent of its powers.
 - I know every external dependency and whether it is trusted or user-controlled.
 
-Use the Slither/Solhint/Aderyn leads alongside the crawl. They complement it, they don't replace it.
+Use the Slither/Solhint/Aderyn/4naly3er leads alongside the crawl. They complement it, they don't replace it.
 
 ### Step 2 — Orchestration routing
 1. Take into account if command parameter `--exclude-subagents` has been applied — the selected subagents marked as excluded are out of scope. Skip if parameter not passed.
 2. Take into account command parameter `--raw-manual-context`. E.g. `--raw-manual-context "protocol won't use liquidations"` shall exclude the [liquidation-analyzer.md](../../../../agents/liquidation-analyzer.md) from the scope. Skip if parameter not passed.
-3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. In this decision making use the Slither, Solhint and Aderyn leads as **visibility** about which subagents are worth spawning — e.g. a Slither `reentrancy-*` lead is a reason to look closer at the [reentrancy-analyzer.md](../../../../agents/reentrancy-analyzer.md), a Solhint `no-inline-assembly` lead points at the [yul-assembly-analyzer.md](../../../../agents/yul-assembly-analyzer.md), `divide-before-multiply` points at the [math-analyzer.md](../../../../agents/math-analyzer.md), `tx-origin` / `arbitrary-send-eth` / `unprotected-upgradeable` point at the [access-control-analyzer.md](../../../../agents/access-control-analyzer.md). Rules for using them:
+3. Based on the crawling report from Step 1, decide which in scope subagents should be spawned — be super precise with this decision. In this decision making use the Slither, Solhint, Aderyn and 4naly3er leads as **visibility** about which subagents are worth spawning — e.g. a Slither `reentrancy-*` lead is a reason to look closer at the [reentrancy-analyzer.md](../../../../agents/reentrancy-analyzer.md), a Solhint `no-inline-assembly` lead points at the [yul-assembly-analyzer.md](../../../../agents/yul-assembly-analyzer.md), `divide-before-multiply` points at the [math-analyzer.md](../../../../agents/math-analyzer.md), `tx-origin` / `arbitrary-send-eth` / `unprotected-upgradeable` point at the [access-control-analyzer.md](../../../../agents/access-control-analyzer.md), a 4naly3er `Centralization Risk for trusted owners` lead points at the [centralization-privilege-analyzer.md](../../../../agents/centralization-privilege-analyzer.md) and a 4naly3er fee-on-transfer lead points at the [token-compatibility-analyzer.md](../../../../agents/token-compatibility-analyzer.md). Rules for using them:
     - A lead is a hint, not a verdict — confirm against your own crawling that the pointed code area really is relevant for the subagent's domain before spawning it.
     - A lead alone is **not** enough reason to spawn a subagent whose domain doesn't exist in the codebase, and the absence of leads is **not** a reason to skip a subagent that the crawling says is relevant ( static analyzers have blind spots for business-logic issues ).
     - Leads that don't map to any subagent's domain ( e.g. style / visibility rules ) are simply not routed anywhere. Spawning a subagent that doesn't make sense will end up spending more tokens and decreasing the LLM performance or another problem could be missing to spawn a relevant subagent — both scenarios are **CRITICAL**. Example:
@@ -102,8 +102,8 @@ Use the Slither/Solhint/Aderyn leads alongside the crawl. They complement it, th
 
 Spawn in parallel the selected **( only the strictly selected, not all of them )** subagents from Step 2 and let them perform their security checklists. Their task is to validate if there are any exploits based on their individual checklists and build a vulnerability report list. Respect command parameter `--subagents-model`.
 
-**Handing over the leads** — when spawning each subagent, include in its prompt only the Slither/Solhint/Aderyn leads relevant to its domain ( matching its checklist area and the in-scope contracts it analyzes ), framed explicitly as follows:
-- These are **unverified leads** produced by static analysis tools ( Slither / Solhint / Aderyn ), not confirmed vulnerabilities. They are hints on where to look, nothing more.
+**Handing over the leads** — when spawning each subagent, include in its prompt only the Slither/Solhint/Aderyn/4naly3er leads relevant to its domain ( matching its checklist area and the in-scope contracts it analyzes ), framed explicitly as follows:
+- These are **unverified leads** produced by static analysis tools ( Slither / Solhint / Aderyn / 4naly3er ), not confirmed vulnerabilities. They are hints on where to look, nothing more.
 - The subagent must validate every lead independently by tracing the real code path and running it through its own checklist. The tool's output, rating or detector name is not evidence.
 - If a lead can't be proven as a real exploit, the subagent discards it silently — a discarded lead is a correct outcome, a wrongly confirmed lead is not.
 - The leads must not narrow the subagent's work — it still performs its entire checklist on the in-scope code and reports whatever it proves, with or without a matching lead.
